@@ -1,0 +1,63 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+
+    "SEARCH_ENDPOINT": "https://<your-search-service>.search.windows.net",
+    "SEARCH_KEY": "<local-dev-only-admin-key>",
+    "SEARCH_INDEX_NAME": "crawled-content-index",
+    "EMBEDDING_DIMENSIONS": "3072",
+
+    "AZURE_OPENAI_ENDPOINT": "https://<your-openai-resource>.openai.azure.com/",
+    "AZURE_OPENAI_API_KEY": "<local-dev-only-key>",
+    "AZURE_OPENAI_API_VERSION": "2024-08-01-preview",
+    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": "text-embedding-3-large",
+
+    "AZURE_TENANT_ID": "<your-entra-tenant-id>",
+    "SHAREPOINT_CLIENT_ID": "<your-app-registration-client-id>",
+    "SHAREPOINT_CLIENT_SECRET": "<your-app-registration-client-secret>",
+    "SHAREPOINT_SITE_ID": "",
+    "SHAREPOINT_HOSTNAME": "contoso.sharepoint.com",
+    "SHAREPOINT_SITE_PATH": "/sites/Helpdesk",
+    "SHAREPOINT_URL_LIST_ID": "<your-list-id-containing-tracked-urls>",
+    "LIST_FIELD_URL": "SeedURL",
+    "LIST_FIELD_TITLE": "Title",
+    "SHAREPOINT_LIBRARY_LIST_ID": "<your-document-library-list-id>",
+    "SHAREPOINT_CATEGORIES_LIST_ID": "<your-categories-lookup-list-id>",
+    "SHAREPOINT_SUBCATEGORIES_LIST_ID": "<your-subcategories-lookup-list-id>",
+    "LIST_FIELD_CATEGORY": "KBCategory",
+    "LIST_FIELD_SUBCATEGORY": "KBSubCategory",
+    "LIST_FIELD_CATEGORY_NAME": "CategoryName",
+    "LIST_FIELD_SUBCATEGORY_NAME": "SubCategoryName",
+    "AZURE_OPENAI_CLASSIFY_DEPLOYMENT": "gpt-4o-mini",
+
+    "LIBRARY_SYNC_CRON": "0 0 * * * *",
+
+    "SHAREPOINT_TICKETS_LIST_ID": "<your-tickets-list-id>",
+    "SHAREPOINT_TICKET_COMMENTS_LIST_ID": "<your-ticket-comments-list-id>",
+    "LIST_FIELD_TICKET_ID": "TicketID0",
+    "LIST_FIELD_TICKET_SUBJECT": "Title",
+    "LIST_FIELD_TICKET_DESCRIPTION": "Description",
+    "LIST_FIELD_TICKET_DEPARTMENT": "Department",
+    "LIST_FIELD_TICKET_SUBCATEGORY": "SubCategory",
+    "LIST_FIELD_TICKET_STATUS": "Status",
+    "LIST_FIELD_TICKET_COMMENT_TEXT": "CommentText",
+    "LIST_FIELD_TICKET_COMMENT_LOOKUP": "TicketLookupLookupId",
+    "TICKET_SYNC_CRON": "0 */15 * * * *",
+
+    "AZURE_OPENAI_ANSWER_DEPLOYMENT": "gpt-4o",
+    "SEARCH_TOP_K": "5",
+    "ANSWER_REQUEST_TIMEOUT_SECONDS": "30",
+
+    "PREFILTER_MIN_SCORE": "38",
+    "SEARXNG_URL": "https://crawler-searxng.victoriousisland-60ce9eb7.eastus.azurecontainerapps.io",
+    "SEARXNG_QUERY_TIMEOUT_SECONDS": "10",
+    "SEARCH_QUERY_TIMEOUT_SECONDS": "8",
+    "SEARCH_MAX_ATTEMPTS": "2",
+    "SEARCH_RETRY_DELAY_SECONDS": "0.5",
+    "MAX_SELECTED_URLS": "2",
+    "MAX_SUBLINKS": "3",
+    "LIVE_FETCH_TIMEOUT_SECONDS": "5"
+  }
+}

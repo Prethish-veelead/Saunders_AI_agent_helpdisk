@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ask the crawler index</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
+  input { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; }
+  button { margin-top: 8px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
+  pre { background: #111; color: #0f0; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  .status { color: #666; font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h2>Ask /api/ask</h2>
+  <input id="question" type="text" placeholder="e.g. vpn is not working?" />
+  <button onclick="ask()">Ask</button>
+  <div class="status" id="status"></div>
+  <pre id="output">(response will appear here)</pre>
+
+<script>
+async function ask() {
+  const question = document.getElementById("question").value.trim();
+  const output = document.getElementById("output");
+  const status = document.getElementById("status");
+  if (!question) return;
+
+  status.textContent = "Asking...";
+  output.textContent = "";
+  try {
+    const resp = await fetch("http://localhost:7071/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await resp.json();
+    status.textContent = "HTTP " + resp.status;
+    output.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    status.textContent = "Request failed";
+    output.textContent = String(err);
+  }
+}
+
+document.getElementById("question").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") ask();
+});
+</script>
+</body>
+</html>

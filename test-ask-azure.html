@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ask the Web Crawler (Azure)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 16px; }
+  label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: #333; }
+  input { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; margin-top: 4px; }
+  button { margin-top: 16px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+  pre { background: #111; color: #0f0; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin-top: 16px; }
+  .status { color: #666; font-size: 13px; margin-top: 8px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+</style>
+</head>
+<body>
+  <h2>Ask the Web Crawler — Azure test page</h2>
+
+  <div class="row">
+    <div>
+      <label for="baseUrl">Function App base URL</label>
+      <input id="baseUrl" type="text" value="https://saunders-web-crawler-func.azurewebsites.net" />
+    </div>
+    <div>
+      <label for="funcKey">Function key</label>
+      <input id="funcKey" type="text" value="" placeholder="paste your Function App key" />
+    </div>
+  </div>
+
+  <label for="question">Question</label>
+  <input id="question" type="text" placeholder="e.g. What is the ticket status flow?" />
+
+  <button onclick="ask()">Ask</button>
+  <div class="status" id="status"></div>
+  <pre id="output">(response will appear here)</pre>
+
+<script>
+async function ask() {
+  const baseUrl = document.getElementById("baseUrl").value.trim().replace(/\/$/, "");
+  const funcKey = document.getElementById("funcKey").value.trim();
+  const question = document.getElementById("question").value.trim();
+  const output = document.getElementById("output");
+  const status = document.getElementById("status");
+
+  if (!baseUrl || !funcKey || !question) {
+    status.textContent = "Fill in the base URL, function key, and a question first.";
+    return;
+  }
+
+  const url = `${baseUrl}/api/ask?code=${encodeURIComponent(funcKey)}`;
+  status.textContent = "Asking...";
+  output.textContent = "";
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await resp.json();
+    status.textContent = "HTTP " + resp.status;
+    output.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    status.textContent = "Request failed";
+    output.textContent = String(err);
+  }
+}
+
+document.getElementById("question").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") ask();
+});
+</script>
+</body>
+</html>

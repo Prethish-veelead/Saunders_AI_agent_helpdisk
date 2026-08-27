@@ -1,0 +1,11 @@
+.venv/
+.python_packages/
+__pycache__/
+*.pyc
+.claude/
+.deepeval/
+.vscode/
+.azurite/
+
+# Local secrets - never commit
+local.settings.json

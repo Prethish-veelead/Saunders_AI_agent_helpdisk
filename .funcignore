@@ -1,0 +1,12 @@
+.venv/
+.python_packages/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.claude/
+.deepeval/
+.vscode/
+.azurite/
+test_*.py
+*.md
