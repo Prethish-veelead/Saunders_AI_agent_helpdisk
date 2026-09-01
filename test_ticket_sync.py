@@ -9,7 +9,7 @@ Usage:
 from unittest.mock import patch
 
 import helpdesk_answer
-import live_url_search
+import crawl_url_search
 import sharepoint_client
 
 FAILURES = []
@@ -52,10 +52,7 @@ def test_get_resolved_tickets():
         ]
     }
 
-    with patch.object(sharepoint_client, "AZURE_TENANT_ID", "fake-tenant"), \
-         patch.object(sharepoint_client, "SHAREPOINT_CLIENT_ID", "fake-client"), \
-         patch.object(sharepoint_client, "SHAREPOINT_CLIENT_SECRET", "fake-secret"), \
-         patch.object(sharepoint_client, "SHAREPOINT_TICKETS_LIST_ID", "fake-list-id"), \
+    with patch.object(sharepoint_client, "SHAREPOINT_TICKETS_LIST_ID", "fake-list-id"), \
          patch.object(sharepoint_client, "_get_site_id", return_value="fake-site-id"), \
          patch.object(sharepoint_client, "_graph_get", return_value=mock_response) as mock_graph_get:
 
@@ -130,6 +127,126 @@ def test_ticket_answers_skips_fallback():
         result.get("category") == "IT" and result.get("subcategory") == "Network" and result.get("source") == "ticket",
         f"got {result}",
     )
+
+
+def test_ticket_first_check_never_receives_conversation_history():
+    print("\n--- Ticket-first check ignores conversation_history (prevents citing a stale/irrelevant ticket) ---")
+    print("Real bug this guards against: a follow-up re-asking info already given in a prior turn got")
+    print("answered correctly from memory, but cited a totally unrelated ticket to satisfy the schema —")
+    print("because generate_structured_response() was handed conversation_history alongside")
+    print("near-universally-irrelevant ticket chunks (Azure AI Search's kNN always returns *something*).")
+
+    history = [{"question": "what are lenovo gaming laptops?", "answer": "The Legion Pro 7 has an i9 and RTX 4080."}]
+
+    with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+        mock_search.return_value = [TICKET_CHUNK]
+        mock_generate.return_value = {
+            "not_found": False, "subject": "s", "description": "d", "answer": "irrelevant ticket answer",
+            "answer_reference_numbers": [1], "category": "IT", "sub_category": "VPN", "follow_up_questions": [],
+        }
+
+        helpdesk_answer.answer_question("what are the specs of the legion pro 7?", conversation_history=history)
+
+    first_call_history = mock_generate.call_args_list[0].args[2] if len(mock_generate.call_args_list[0].args) > 2 \
+        else mock_generate.call_args_list[0].kwargs.get("conversation_history", "MISSING")
+    check("the ticket-first generate_structured_response call got conversation_history=None",
+          first_call_history is None, f"got {first_call_history}")
+
+
+def test_fallback_search_still_receives_conversation_history():
+    print("\n--- Fallback (post ticket-first) search still gets conversation_history, for legitimate follow-ups ---")
+
+    history = [{"question": "how do I reset my vpn?", "answer": "Restart the client."}]
+
+    with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
+         patch.object(helpdesk_answer, "search_chunks_all_sources") as mock_fallback_search, \
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+        mock_search.return_value = []
+        mock_fallback_search.return_value = [FALLBACK_CHUNK]
+        mock_generate.return_value = {
+            "not_found": False, "subject": "s", "description": "d", "answer": "a",
+            "answer_reference_numbers": [1], "category": "IT", "sub_category": "Network", "follow_up_questions": [],
+        }
+
+        # ticket_chunks == [] takes the same "no ticket chunks" branch already
+        # exercised by test_falls_back_when_no_ticket_chunks, which attempts
+        # crawl_url_answer() first (fails soft with no SharePoint config in
+        # this test environment, same as that test) before reaching the
+        # merged fallback search this test is actually checking.
+        helpdesk_answer.answer_question("does that work on mobile too?", conversation_history=history)
+
+    call_history = mock_generate.call_args.args[2] if len(mock_generate.call_args.args) > 2 \
+        else mock_generate.call_args.kwargs.get("conversation_history", "MISSING")
+    check("the fallback generate_structured_response call still received the real conversation_history",
+          call_history == history, f"got {call_history}")
+
+
+def test_crawl_url_answer_never_receives_conversation_history():
+    print("\n--- Live URL crawl call site also ignores conversation_history (same class of bug as tickets) ---")
+    print("Real bug this guards against: a VPN/MFA follow-up whose correct answer had already been given")
+    print("from a library doc in turn 1 got re-answered correctly from memory on turn 2, but cited an")
+    print("unrelated tracked page that never mentioned VPN or MFA — crawl_url_search's candidate pool has")
+    print("the same 'always returns something, often irrelevant' flaw the ticket-first check had.")
+
+    history = [{"question": "how do I approve the MFA prompt for VPN?", "answer": "Sign in to GlobalProtect and approve it."}]
+
+    with patch.object(helpdesk_answer, "search_chunks", return_value=[]), \
+         patch.object(crawl_url_search, "crawl_url_answer") as mock_live_answer:
+        async def fake_live_answer(question, config, conversation_history=None):
+            return None
+        mock_live_answer.side_effect = fake_live_answer
+
+        with patch.object(helpdesk_answer, "search_chunks_all_sources", return_value=[]):
+            helpdesk_answer.answer_question("is it good for gaming?", conversation_history=history)
+
+    call = mock_live_answer.call_args
+    passed_history = call.args[2] if len(call.args) > 2 else call.kwargs.get("conversation_history", "MISSING")
+    check("crawl_url_answer was called with conversation_history=None",
+          passed_history is None, f"got {passed_history}")
+
+
+def test_ticket_first_check_requires_actionable_resolution():
+    print("\n--- Ticket-first check requires require_actionable_resolution=True (incomplete tickets fall through) ---")
+    print("A ticket can be about the same topic without its own resolution being usable (e.g. \"escalated\",")
+    print("\"fixed on my end\") — that must not be shown as the final answer.")
+
+    with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+        mock_search.return_value = [TICKET_CHUNK]
+        mock_generate.return_value = {
+            "not_found": False, "subject": "s", "description": "d", "answer": "a",
+            "answer_reference_numbers": [1], "category": "IT", "sub_category": "VPN", "follow_up_questions": [],
+        }
+
+        helpdesk_answer.answer_question("vpn is not working")
+
+    call = mock_generate.call_args_list[0]
+    require_flag = call.args[3] if len(call.args) > 3 else call.kwargs.get("require_actionable_resolution", "MISSING")
+    check("the ticket-first generate_structured_response call got require_actionable_resolution=True",
+          require_flag is True, f"got {require_flag}")
+
+
+def test_fallback_search_does_not_require_actionable_resolution():
+    print("\n--- Fallback (post ticket-first) search does not set require_actionable_resolution ---")
+    print("That rule is ticket-specific — library docs/live URLs aren't informal closing notes like tickets are.")
+
+    with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
+         patch.object(helpdesk_answer, "search_chunks_all_sources") as mock_fallback_search, \
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+        mock_search.return_value = []
+        mock_fallback_search.return_value = [FALLBACK_CHUNK]
+        mock_generate.return_value = {
+            "not_found": False, "subject": "s", "description": "d", "answer": "a",
+            "answer_reference_numbers": [1], "category": "IT", "sub_category": "Network", "follow_up_questions": [],
+        }
+
+        helpdesk_answer.answer_question("something with zero ticket signal")
+
+    call = mock_generate.call_args
+    require_flag = call.args[3] if len(call.args) > 3 else call.kwargs.get("require_actionable_resolution", False)
+    check("the fallback generate_structured_response call left require_actionable_resolution at its default (False)",
+          require_flag is False, f"got {require_flag}")
 
 
 def test_falls_back_when_no_ticket_chunks():
@@ -231,7 +348,7 @@ def test_live_url_search_attempted_even_when_ticket_chunks_found_but_not_confide
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
          patch.object(helpdesk_answer, "search_chunks_all_sources", return_value=[FALLBACK_CHUNK]), \
          patch.object(helpdesk_answer, "generate_structured_response") as mock_generate, \
-         patch.object(live_url_search, "live_url_answer") as mock_live_answer:
+         patch.object(crawl_url_search, "crawl_url_answer") as mock_live_answer:
         mock_search.return_value = [TICKET_CHUNK]
         mock_generate.side_effect = [
             NOT_FOUND_RESPONSE,
@@ -243,7 +360,7 @@ def test_live_url_search_attempted_even_when_ticket_chunks_found_but_not_confide
             },
         ]
 
-        async def fake_live_answer(question, config):
+        async def fake_live_answer(question, config, conversation_history=None):
             return None
 
         mock_live_answer.side_effect = fake_live_answer
@@ -263,10 +380,10 @@ def test_live_url_search_attempted_when_no_ticket_chunks():
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
          patch.object(helpdesk_answer, "search_chunks_all_sources", return_value=[FALLBACK_CHUNK]), \
          patch.object(helpdesk_answer, "generate_structured_response"), \
-         patch.object(live_url_search, "live_url_answer") as mock_live_answer:
+         patch.object(crawl_url_search, "crawl_url_answer") as mock_live_answer:
         mock_search.return_value = []
 
-        async def fake_live_answer(question, config):
+        async def fake_live_answer(question, config, conversation_history=None):
             return None
 
         mock_live_answer.side_effect = fake_live_answer
@@ -283,6 +400,11 @@ def test_live_url_search_attempted_when_no_ticket_chunks():
 if __name__ == "__main__":
     test_get_resolved_tickets()
     test_ticket_answers_skips_fallback()
+    test_ticket_first_check_never_receives_conversation_history()
+    test_crawl_url_answer_never_receives_conversation_history()
+    test_fallback_search_still_receives_conversation_history()
+    test_ticket_first_check_requires_actionable_resolution()
+    test_fallback_search_does_not_require_actionable_resolution()
     test_falls_back_when_no_ticket_chunks()
     test_falls_back_when_ticket_answer_is_not_found()
     test_search_chunks_all_sources_merges_every_source_type_independently()

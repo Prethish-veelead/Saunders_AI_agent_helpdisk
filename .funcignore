@@ -10,3 +10,6 @@ __pycache__/
 .azurite/
 test_*.py
 *.md
+# A separate, self-contained research prototype (own venv/.env/requirements) —
+# never part of this Function App's own deployment.
+test_bing_grounded_search/

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saunders Helpdesk Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --paper: #faf9f4;
+    --paper-raised: #ffffff;
+    --ink: #1b211f;
+    --ink-soft: #57625c;
+    --ink-faint: #8b948d;
+    --line: #e1decf;
+    --accent: #0e7c71;
+    --accent-soft: #dceeea;
+    --warn: #a15c1f;
+    --warn-soft: #f3e6d6;
+    --good: #2f7a3d;
+    --good-soft: #e3f0e2;
+    --shadow: 0 1px 2px rgba(27,33,31,0.04), 0 8px 24px rgba(27,33,31,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121615;
+      --paper-raised: #181d1b;
+      --ink: #e9e7dd;
+      --ink-soft: #9ca6a0;
+      --ink-faint: #6b756f;
+      --line: #262e2b;
+      --accent: #34d6c4;
+      --accent-soft: #16302c;
+      --warn: #e0a458;
+      --warn-soft: #2e2418;
+      --good: #6fbf7a;
+      --good-soft: #16281a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121615;
+    --paper-raised: #181d1b;
+    --ink: #e9e7dd;
+    --ink-soft: #9ca6a0;
+    --ink-faint: #6b756f;
+    --line: #262e2b;
+    --accent: #34d6c4;
+    --accent-soft: #16302c;
+    --warn: #e0a458;
+    --warn-soft: #2e2418;
+    --good: #6fbf7a;
+    --good-soft: #16281a;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  html { background: var(--paper); }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-soft); }
+  a { color: var(--accent); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  h1, h2, h3, .display { font-family: "Archivo", system-ui, sans-serif; text-wrap: balance; }
+
+  .masthead { max-width: 960px; margin: 0 auto; padding: 64px 32px 8px; }
+  .eyebrow {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); font-weight: 500;
+  }
+  h1 { font-size: clamp(32px, 5vw, 46px); font-weight: 800; letter-spacing: -0.02em; margin: 10px 0 6px; }
+  .subtitle { color: var(--ink-soft); font-size: 18px; max-width: 64ch; margin: 0 0 8px; }
+  .meta-row {
+    display: flex; gap: 20px; flex-wrap: wrap; font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; color: var(--ink-faint); margin-top: 20px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  main { max-width: 760px; margin: 0 auto; padding: 8px 32px 100px; }
+  section { margin-top: 60px; }
+  section > .num-label {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  h2 { font-size: 26px; font-weight: 700; margin: 0 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 16.5px; font-weight: 700; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+
+  /* diagrams */
+  .diagram-wrap { max-width: 1040px; margin: 0 auto; padding: 4px 32px 8px; overflow-x: auto; }
+  .diagram-label {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-faint); margin: 28px 0 10px; text-align: center;
+  }
+  .flow { display: flex; align-items: stretch; gap: 0; min-width: 820px; padding: 4px 0 20px; }
+  .node {
+    flex: 1; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 12px; box-shadow: var(--shadow); position: relative;
+  }
+  .node .tag {
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--accent); margin-bottom: 4px;
+  }
+  .node .name { font-family: "Archivo", sans-serif; font-weight: 700; font-size: 14px; margin: 2px 0 5px; }
+  .node .desc { font-size: 12px; color: var(--ink-soft); line-height: 1.4; font-family: "JetBrains Mono", monospace; }
+  .arrow { width: 24px; flex: 0 0 24px; display: flex; align-items: center; justify-content: center; color: var(--accent); font-size: 15px; }
+  .flow.tiers .node.tier1 { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+
+  .callout {
+    border: 1px solid var(--line); background: var(--paper-raised); border-radius: 10px;
+    padding: 16px 18px; box-shadow: var(--shadow); margin: 18px 0;
+  }
+  .callout .label {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 600; color: var(--accent); margin-bottom: 6px;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .table-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 10px; }
+  .table-wrap table { min-width: 460px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--ink-faint); background: var(--paper-raised); font-weight: 500;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; }
+
+  .stack-item { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .stack-item:last-child { border-bottom: none; }
+  .stack-item .tech { flex: 0 0 210px; font-family: "JetBrains Mono", monospace; font-size: 13.5px; color: var(--accent); font-weight: 500; }
+  .stack-item .role p { margin: 0; font-size: 15px; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px; font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .status-pill.live { background: var(--good-soft); color: var(--good); }
+  .status-pill.ready { background: var(--warn-soft); color: var(--warn); }
+  .status-pill::before { content: "●"; font-size: 8px; }
+
+  .cost-total {
+    display: flex; justify-content: space-between; align-items: baseline; padding: 14px 18px;
+    background: var(--accent-soft); border-radius: 10px; margin-top: 14px;
+  }
+  .cost-total .label { font-size: 14px; color: var(--ink-soft); }
+  .cost-total .value { font-family: "JetBrains Mono", monospace; font-size: 20px; font-weight: 600; color: var(--accent); }
+
+  footer { max-width: 760px; margin: 0 auto; padding: 0 32px 64px; color: var(--ink-faint); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="eyebrow">Technical Overview</div>
+  <h1>Saunders Helpdesk Assistant</h1>
+  <p class="subtitle">How the assistant answers a question end to end, what it's built on, how its knowledge stays current, and what it costs to run.</p>
+  <div class="meta-row">
+    <span>Prepared for the Saunders / ICT team</span>
+    <span>Environment: <code>saunders-ai-agent</code> (Australia East)</span>
+    <span>Last updated: 29 Aug 2026</span>
+  </div>
+</div>
+
+<div class="diagram-wrap">
+  <div class="diagram-label">Always running in the background</div>
+  <div class="flow">
+    <div class="node">
+      <div class="tag">Source</div>
+      <div class="name">SharePoint</div>
+      <div class="desc">Tickets, ticket comments, and knowledge library documents — your existing content, untouched.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div class="tag">Every 15 min / every hour</div>
+      <div class="name">Sync</div>
+      <div class="desc">Pulls new or changed items only. Nothing is re-processed if it hasn't changed.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div class="tag">Index</div>
+      <div class="name">Azure AI Search</div>
+      <div class="desc">Your content becomes searchable by both keyword and meaning — ready for the next question.</div>
+    </div>
+  </div>
+
+  <div class="diagram-label">Every time someone asks a question</div>
+  <div class="flow tiers">
+    <div class="node tier1">
+      <div class="tag">Tier 1</div>
+      <div class="name">Closed tickets</div>
+      <div class="desc">A real, complete past resolution — checked first.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div class="tag">Tier 2</div>
+      <div class="name">Your website</div>
+      <div class="desc">Crawls your tracked pages directly if tickets don't answer it.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div class="tag">Tier 3</div>
+      <div class="name">Library + tickets</div>
+      <div class="desc">A broader combined search, last resort.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div class="tag">Generate</div>
+      <div class="name">GPT-4o</div>
+      <div class="desc">Writes the answer, and reports exactly which source it used.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div class="tag">Reply</div>
+      <div class="name">Answer</div>
+      <div class="desc">Real source link + follow-up questions it can actually answer.</div>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section>
+  <div class="num-label">How a question is answered</div>
+  <h2>Three sources, checked in order</h2>
+  <p>Every question is checked against three sources, in a fixed order, and the first one that gives a genuinely complete answer wins:</p>
+  <ol>
+    <li><strong>Closed or resolved tickets.</strong> A real support conversation that already reached a working resolution is usually the best possible answer — more specific and more trusted than general documentation.</li>
+    <li><strong>Your website.</strong> If tickets don't answer it, the assistant reads your tracked web pages directly — no external search engine involved (see the companion brief, <em>Live URL Search</em>, for the full detail on this one).</li>
+    <li><strong>Library documents + tickets, combined.</strong> If neither of the above answers it, a broader search across your full knowledge library and ticket history runs as the last resort.</li>
+  </ol>
+  <div class="callout">
+    <div class="label">Quality safeguard</div>
+    <p>A ticket being "closed" doesn't automatically mean its notes are useful — a resolution like "escalated to network team" or "fixed on my end" doesn't actually help the next person. The assistant checks for this: if a ticket's own content wouldn't genuinely let someone fix the issue themselves, it's treated the same as not finding an answer at all, and the system moves on to the website or library instead of showing an unhelpful note.</p>
+  </div>
+  <div class="callout">
+    <div class="label">Source accuracy safeguard</div>
+    <p>Every answer is checked against exactly which reference document GPT-4o actually drew from — not just whichever result scored highest in search. This is what stops a user from ever seeing, say, a ticket link cited next to an answer that actually came from a library document.</p>
+  </div>
+</section>
+
+<section>
+  <div class="num-label">Multi-turn support</div>
+  <h2>It remembers the conversation</h2>
+  <p>A follow-up question like "is it good for gaming?" only makes sense in light of what was just asked. The assistant supports this: each request can include the prior question-and-answer pairs from the same conversation, and it uses them to understand what a follow-up actually means — resolving "it," "that one," "the second option," and similar references to whatever they point back to.</p>
+  <p>The service itself is stateless — it doesn't store or remember anything between requests. Whatever app or chat widget is talking to it is responsible for resending the relevant prior turns each time. This keeps the backend simple and puts conversation history entirely under your own app's control.</p>
+</section>
+
+<section>
+  <div class="num-label">What it's built on</div>
+  <h2>The stack</h2>
+  <div class="table-wrap" style="border:none;">
+    <div class="stack-item">
+      <div class="tech">Azure Functions</div>
+      <div class="role"><p>Runs everything — Python, Linux, Consumption plan. No server to manage, and no cost while idle.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">Azure AI Search — Basic</div>
+      <div class="role"><p>The searchable index behind tickets and library documents — combines keyword matching with meaning-based (vector) search in one query.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">Azure OpenAI — GPT-4o</div>
+      <div class="role"><p>Writes every final answer, and reports exactly which source it used — the only model involved in generating a response.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">Azure OpenAI — text-embedding-3-large</div>
+      <div class="role"><p>Converts tickets, documents, and questions into the vector form the meaning-based search relies on.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">Microsoft Graph / SharePoint</div>
+      <div class="role"><p>Source of truth for tickets, library documents, and tracked website URLs. Connected via a Managed Identity — no client secret stored anywhere.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">requests + BeautifulSoup + RapidFuzz</div>
+      <div class="role"><p>Powers the website-crawl search — plain HTTP fetches and local text matching, no external search provider or API.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">Application Insights</div>
+      <div class="role"><p>Monitoring and diagnostics — every request, sync run, and error is logged and queryable.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="num-label">Keeping the knowledge current</div>
+  <h2>Sync schedule</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>What syncs</th><th>How often</th><th class="mono">Setting</th></tr></thead>
+      <tbody>
+        <tr><td>Tickets</td><td>Every 15 minutes</td><td class="mono">TICKET_SYNC_CRON</td></tr>
+        <tr><td>Library documents</td><td>Every hour</td><td class="mono">LIBRARY_SYNC_CRON</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Both are editable by your own team, with no code change and no developer needed: Azure Portal → the Function App → <strong>Settings → Environment variables</strong> → edit the value → Save. Each sync only processes items that are new or have actually changed since last time, so running it every 15 minutes costs no more than running it once a day would — nothing gets needlessly re-processed.</p>
+</section>
+
+<section>
+  <div class="num-label">Cost</div>
+  <h2>What it costs to run</h2>
+  <p>Pricing below is Microsoft's published Azure retail rate for the Australia East region, checked at the time of writing.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Component</th><th class="num">Cost</th><th>Type</th></tr></thead>
+      <tbody>
+        <tr><td>Azure AI Search (Basic tier)</td><td class="num mono">~$97 / month</td><td>Fixed</td></tr>
+        <tr><td>GPT-4o — input tokens</td><td class="num mono">$2.50 / 1M tokens</td><td>Per question</td></tr>
+        <tr><td>GPT-4o — output tokens</td><td class="num mono">$10.00 / 1M tokens</td><td>Per question</td></tr>
+        <tr><td>Text embeddings</td><td class="num mono">$0.13 / 1M tokens</td><td>Per question + per synced item</td></tr>
+        <tr><td>Function App compute</td><td class="num mono">Free grant: 1M executions + 400,000 GB-s / month</td><td>Covers this workload entirely</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>A realistic monthly estimate</h3>
+  <p>At roughly 5,000 questions a month, plus continuous 15-minute/hourly syncing of a normal-sized ticket and document volume:</p>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td>Azure AI Search (fixed)</td><td class="num mono">$97.00</td></tr>
+        <tr><td>GPT-4o generation (5,000 questions × ~$0.015)</td><td class="num mono">$75.00</td></tr>
+        <tr><td>Embeddings (questions + incremental sync)</td><td class="num mono">&lt; $1.00</td></tr>
+        <tr><td>Function compute</td><td class="num mono">$0.00 (within free grant)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cost-total">
+    <span class="label">Estimated total at 5,000 questions/month</span>
+    <span class="value">≈ $173 / month</span>
+  </div>
+  <p style="margin-top:10px; font-size:13.5px; color:var(--ink-faint);">The fixed Azure AI Search cost dominates at low volume — it doesn't change whether you get 500 questions or 50,000. GPT-4o cost scales directly with usage. Converted at indicative USD rates; Azure bills in your subscription's currency.</p>
+</section>
+
+<section>
+  <div class="num-label">Where things stand today</div>
+  <h2>Status</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Capability</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Answering from closed/resolved tickets</td><td><span class="status-pill live">Live in production</span></td></tr>
+        <tr><td>Answering from library documents</td><td><span class="status-pill live">Live in production</span></td></tr>
+        <tr><td>Website crawl search (Tier 2)</td><td><span class="status-pill ready">Built &amp; verified — ready to roll out</span></td></tr>
+        <tr><td>Multi-turn conversation support</td><td><span class="status-pill ready">Built &amp; verified — ready to roll out</span></td></tr>
+        <tr><td>Source-accuracy &amp; ticket-quality safeguards</td><td><span class="status-pill ready">Built &amp; verified — ready to roll out</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:14px;">Tickets and library documents are answering real questions in your production environment today. The three newer capabilities above have been built and thoroughly tested in our development environment against real content, and are ready to move into your production system whenever your team gives the go-ahead.</p>
+</section>
+
+</main>
+
+<footer>
+  Saunders Helpdesk Assistant — internal engineering documentation.
+</footer>
+</body>
+</html>

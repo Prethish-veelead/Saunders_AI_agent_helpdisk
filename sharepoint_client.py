@@ -6,24 +6,38 @@ Reads seed URLs from a SharePoint List (to feed the crawl orchestrator) and
 document content from a SharePoint Library (indexed directly, no crawling
 needed since the content is already available).
 
-Client-credentials Graph auth, same pattern as the chatbot router's
-helpdesk_search.py — this is a separate Function App/codebase per the
-earlier decision to keep the crawler in its own repo, so this auth code is
-intentionally duplicated here rather than shared across projects.
+Graph auth prefers the Function App's own Managed Identity
+(DefaultAzureCredential) — no stored client secret, nothing to leak or
+rotate. The identity needs the Microsoft Graph "Sites.Read.All" (or
+"Sites.Selected") application permission granted directly via a Graph
+app-role assignment (managed identities don't appear in the Portal's
+normal API-permissions UI for this) — granting that requires Entra ID
+Global/Privileged Role Administrator, which not every environment's admin
+has (found the hard way: our own dev tenant's account lacks it, while the
+client's tenant has it). So this falls back to the older client-credentials
+flow (SHAREPOINT_CLIENT_ID + SHAREPOINT_CLIENT_SECRET + AZURE_TENANT_ID)
+whenever those are configured, and only uses Managed Identity when they're
+absent — this keeps existing deployments (like our own dev environment)
+working without requiring that permission grant, while new deployments
+default to the more secure, secret-free path.
 """
 
 import io
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import requests
+from azure.identity import DefaultAzureCredential
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger("sharepoint_client")
 
+# Legacy client-credentials fallback — only used when all three are set
+# (see _get_graph_token). Not required for new deployments, which should
+# rely on Managed Identity instead.
 AZURE_TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
 SHAREPOINT_CLIENT_ID = os.environ.get("SHAREPOINT_CLIENT_ID", "")
 SHAREPOINT_CLIENT_SECRET = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
@@ -50,6 +64,13 @@ LIST_FIELD_CATEGORY = os.environ.get("LIST_FIELD_CATEGORY", "KBCategory")
 LIST_FIELD_SUBCATEGORY = os.environ.get("LIST_FIELD_SUBCATEGORY", "KBSubCategory")
 LIST_FIELD_CATEGORY_NAME = os.environ.get("LIST_FIELD_CATEGORY_NAME", "CategoryName")
 LIST_FIELD_SUBCATEGORY_NAME = os.environ.get("LIST_FIELD_SUBCATEGORY_NAME", "SubCategoryName")
+
+# Only documents whose ArticleStatus is this value get synced/indexed —
+# same idea as tickets being restricted to Closed/Resolved. Confirmed the
+# same field name and value are used on both the client's and our dev
+# SharePoint library.
+LIST_FIELD_LIBRARY_STATUS = os.environ.get("LIST_FIELD_LIBRARY_STATUS", "ArticleStatus")
+LIBRARY_PUBLISHED_STATUS_VALUE = os.environ.get("LIBRARY_PUBLISHED_STATUS_VALUE", "Published")
 
 SHAREPOINT_TICKETS_LIST_ID = os.environ.get("SHAREPOINT_TICKETS_LIST_ID", "")
 SHAREPOINT_TICKET_COMMENTS_LIST_ID = os.environ.get("SHAREPOINT_TICKET_COMMENTS_LIST_ID", "")
@@ -92,8 +113,15 @@ class GraphAPIError(Exception):
 
 
 # --------------------------------------------------------------------------
-# Auth — client-credentials token, cached until near expiry
+# Auth — Managed Identity via DefaultAzureCredential by default (no stored
+# secret; that credential object caches and refreshes its own token
+# internally, so no manual expiry bookkeeping is needed for it). Falls
+# back to a cached client-credentials token when a legacy secret is
+# configured — see the module docstring for why both paths exist.
 # --------------------------------------------------------------------------
+
+_credential = DefaultAzureCredential()
+
 
 @dataclass
 class _TokenCache:
@@ -101,13 +129,16 @@ class _TokenCache:
     expires_at: float = 0.0
 
 
-_token_cache = _TokenCache()
+_legacy_token_cache = _TokenCache()
 
 
-def _get_graph_token() -> str:
+def _get_graph_token_legacy() -> str:
+    """Client-credentials flow, only reached when SHAREPOINT_CLIENT_ID/
+    SECRET/AZURE_TENANT_ID are all configured — see _get_graph_token().
+    """
     now = time.time()
-    if _token_cache.access_token and now < (_token_cache.expires_at - 60):
-        return _token_cache.access_token
+    if _legacy_token_cache.access_token and now < (_legacy_token_cache.expires_at - 60):
+        return _legacy_token_cache.access_token
 
     url = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/token"
     data = {
@@ -118,12 +149,21 @@ def _get_graph_token() -> str:
     }
     resp = requests.post(url, data=data, timeout=REQUEST_TIMEOUT_SECONDS)
     if resp.status_code != 200:
-        raise GraphAPIError(f"Failed to acquire Graph token: {resp.status_code} {resp.text[:200]}")
+        raise GraphAPIError(f"Failed to acquire Graph token (client credentials): {resp.status_code} {resp.text[:200]}")
 
     body = resp.json()
-    _token_cache.access_token = body["access_token"]
-    _token_cache.expires_at = now + int(body.get("expires_in", 3600))
-    return _token_cache.access_token
+    _legacy_token_cache.access_token = body["access_token"]
+    _legacy_token_cache.expires_at = now + int(body.get("expires_in", 3600))
+    return _legacy_token_cache.access_token
+
+
+def _get_graph_token() -> str:
+    if AZURE_TENANT_ID and SHAREPOINT_CLIENT_ID and SHAREPOINT_CLIENT_SECRET:
+        return _get_graph_token_legacy()
+    try:
+        return _credential.get_token("https://graph.microsoft.com/.default").token
+    except Exception as exc:  # noqa: BLE001 — surfaced as our own error type, same contract as before
+        raise GraphAPIError(f"Failed to acquire Graph token via Managed Identity: {exc}") from exc
 
 
 def _graph_get(
@@ -218,7 +258,7 @@ def get_url_candidates() -> list[dict]:
     title-like column (LIST_FIELD_TITLE) or the value is empty for a given
     row — a missing/renamed title column must never break this.
     """
-    if not (AZURE_TENANT_ID and SHAREPOINT_CLIENT_ID and SHAREPOINT_CLIENT_SECRET and SHAREPOINT_URL_LIST_ID):
+    if not SHAREPOINT_URL_LIST_ID:
         raise SharePointConfigError("SharePoint List configuration is incomplete.")
 
     site_id = _get_site_id()
@@ -356,30 +396,46 @@ def _get_subcategory_names() -> dict[str, str]:
     return _subcategory_names_cache
 
 
-def _get_library_item_category(drive_id: str, item_id: str, filename: str) -> tuple[str, str]:
-    """KBCategory/KBSubCategory on the library are Lookup columns — Graph
-    exposes them as "<name>LookupId" (a reference, not the text itself),
-    resolved here against the HD_Categories/HD_SubCategories reference
-    lists. Uses /drives/{id}/items/... rather than /sites/{id}/drive/...
-    (the site's *default* drive) since this library isn't the site
-    default drive and the latter 404s.
+def _get_library_item_metadata(drive_id: str, item_id: str, filename: str) -> tuple[str, str, str]:
+    """KBCategory/KBSubCategory/ArticleStatus on the library are custom
+    columns, only available through the item's associated list entry — not
+    the plain drive-item metadata /drives/.../items/{id} already returns.
+    KBCategory/KBSubCategory are Lookup columns specifically: Graph exposes
+    them as "<name>LookupId" (a reference, not the text itself), resolved
+    here against the HD_Categories/HD_SubCategories reference lists.
+    ArticleStatus is a plain text/choice column, returned as-is. Uses
+    /drives/{id}/items/... rather than /sites/{id}/drive/... (the site's
+    *default* drive) since this library isn't the site default drive and
+    the latter 404s.
+
+    Returns (category, sub_category, status) — status is "" if it couldn't
+    be determined (missing field, or the fetch itself failed), which
+    get_library_documents() treats as "not Published" so a broken lookup
+    fails closed rather than silently indexing something it shouldn't.
     """
     try:
         list_item = _graph_get(f"/drives/{drive_id}/items/{item_id}/listItem", params={"$expand": "fields"})
     except GraphAPIError as exc:
-        logger.warning("Could not fetch category metadata for '%s': %s", filename, exc)
-        return "", ""
+        logger.warning("Could not fetch metadata for '%s': %s", filename, exc)
+        return "", "", ""
 
     fields = list_item.get("fields", {})
     category_lookup_id = str(fields.get(f"{LIST_FIELD_CATEGORY}LookupId") or "")
     subcategory_lookup_id = str(fields.get(f"{LIST_FIELD_SUBCATEGORY}LookupId") or "")
     category = _get_category_names().get(category_lookup_id, "") if category_lookup_id else ""
     sub_category = _get_subcategory_names().get(subcategory_lookup_id, "") if subcategory_lookup_id else ""
-    return category, sub_category
+    status = fields.get(LIST_FIELD_LIBRARY_STATUS, "")
+    return category, sub_category, status
 
 
 def get_library_documents() -> list[LibraryDocument]:
-    if not (AZURE_TENANT_ID and SHAREPOINT_CLIENT_ID and SHAREPOINT_CLIENT_SECRET and SHAREPOINT_LIBRARY_LIST_ID):
+    """Only documents whose ArticleStatus is LIBRARY_PUBLISHED_STATUS_VALUE
+    ("Published" by default) are synced — same idea as tickets being
+    restricted to Closed/Resolved. The status check happens before the
+    file is downloaded, so a Draft document costs nothing beyond the one
+    metadata lookup.
+    """
+    if not SHAREPOINT_LIBRARY_LIST_ID:
         raise SharePointConfigError("SharePoint Library configuration is incomplete.")
 
     drive_id = _get_library_drive_id()
@@ -391,6 +447,10 @@ def get_library_documents() -> list[LibraryDocument]:
         if not name.lower().endswith(SUPPORTED_LIBRARY_EXTENSIONS):
             continue
         item_id = entry.get("id")
+        category, sub_category, status = _get_library_item_metadata(drive_id, item_id, name)
+        if status != LIBRARY_PUBLISHED_STATUS_VALUE:
+            logger.info("Skipping '%s' — ArticleStatus is '%s', not '%s'.", name, status, LIBRARY_PUBLISHED_STATUS_VALUE)
+            continue
         try:
             content = _graph_get_bytes(f"/drives/{drive_id}/items/{item_id}/content")
             text = _extract_text(name, content)
@@ -398,7 +458,6 @@ def get_library_documents() -> list[LibraryDocument]:
             logger.warning("Skipping '%s' — download failed: %s", name, exc)
             continue
         if text.strip():
-            category, sub_category = _get_library_item_category(drive_id, item_id, name)
             documents.append(LibraryDocument(
                 title=name, text=text, item_id=item_id,
                 last_modified=entry.get("lastModifiedDateTime", ""),
@@ -423,10 +482,24 @@ def get_resolved_tickets() -> list[dict]:
     ticket_id), ticket_id, subject, description, department, sub_category,
     status.
     """
-    if not (AZURE_TENANT_ID and SHAREPOINT_CLIENT_ID and SHAREPOINT_CLIENT_SECRET and SHAREPOINT_TICKETS_LIST_ID):
+    if not SHAREPOINT_TICKETS_LIST_ID:
         raise SharePointConfigError("SharePoint Tickets List configuration is incomplete.")
 
     site_id = _get_site_id()
+
+    # Diagnostic only: distinguishes "the list is empty" from "items exist
+    # but none match the Closed/Resolved filter" (e.g. a wrong
+    # LIST_FIELD_TICKET_STATUS name or unexpected status values) — the
+    # filtered query below can't tell those apart on its own.
+    raw_total = _graph_get(
+        f"/sites/{site_id}/lists/{SHAREPOINT_TICKETS_LIST_ID}/items",
+        params={"$select": "id"},
+    )
+    logger.info(
+        "Tickets list has %d item(s) total, before filtering to Closed/Resolved.",
+        len(raw_total.get("value", [])),
+    )
+
     filter_expr = (
         f"fields/{LIST_FIELD_TICKET_STATUS} eq 'Closed' or "
         f"fields/{LIST_FIELD_TICKET_STATUS} eq 'Resolved'"
@@ -463,7 +536,7 @@ def get_ticket_comments(item_id: str) -> list[str]:
     HD_TicketComments' lookup column stores that, not the human-readable
     TicketID.
     """
-    if not (AZURE_TENANT_ID and SHAREPOINT_CLIENT_ID and SHAREPOINT_CLIENT_SECRET and SHAREPOINT_TICKET_COMMENTS_LIST_ID):
+    if not SHAREPOINT_TICKET_COMMENTS_LIST_ID:
         raise SharePointConfigError("SharePoint Ticket Comments List configuration is incomplete.")
 
     site_id = _get_site_id()

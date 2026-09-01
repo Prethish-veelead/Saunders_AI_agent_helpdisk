@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live URL Search</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --paper: #faf9f4;
+    --paper-raised: #ffffff;
+    --ink: #1b211f;
+    --ink-soft: #57625c;
+    --ink-faint: #8b948d;
+    --line: #e1decf;
+    --accent: #0e7c71;
+    --accent-soft: #dceeea;
+    --warn: #a15c1f;
+    --warn-soft: #f3e6d6;
+    --shadow: 0 1px 2px rgba(27,33,31,0.04), 0 8px 24px rgba(27,33,31,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121615;
+      --paper-raised: #181d1b;
+      --ink: #e9e7dd;
+      --ink-soft: #9ca6a0;
+      --ink-faint: #6b756f;
+      --line: #262e2b;
+      --accent: #34d6c4;
+      --accent-soft: #16302c;
+      --warn: #e0a458;
+      --warn-soft: #2e2418;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121615;
+    --paper-raised: #181d1b;
+    --ink: #e9e7dd;
+    --ink-soft: #9ca6a0;
+    --ink-faint: #6b756f;
+    --line: #262e2b;
+    --accent: #34d6c4;
+    --accent-soft: #16302c;
+    --warn: #e0a458;
+    --warn-soft: #2e2418;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  html { background: var(--paper); }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-soft); }
+
+  a { color: var(--accent); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  h1, h2, h3, .display { font-family: "Archivo", system-ui, sans-serif; text-wrap: balance; }
+
+  .masthead {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 64px 32px 8px;
+  }
+  .eyebrow {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  h1 {
+    font-size: clamp(32px, 5vw, 46px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 10px 0 6px;
+  }
+  .subtitle {
+    color: var(--ink-soft);
+    font-size: 18px;
+    max-width: 62ch;
+    margin: 0 0 8px;
+  }
+  .meta-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  /* ---- pipeline diagram ---- */
+  .pipeline-wrap {
+    max-width: 1040px;
+    margin: 20px auto 0;
+    padding: 12px 32px 8px;
+    overflow-x: auto;
+  }
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    min-width: 880px;
+    padding: 16px 0 28px;
+  }
+  .stage {
+    flex: 1;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 14px;
+    box-shadow: var(--shadow);
+    position: relative;
+    opacity: 0;
+    transform: translateY(6px);
+    animation: rise 0.5s ease forwards;
+  }
+  .stage:nth-child(odd) { animation-delay: calc(var(--i, 0) * 0.08s); }
+  @keyframes rise { to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .stage { animation: none; opacity: 1; transform: none; }
+  }
+  .stage .num {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+  .stage .name {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 14.5px;
+    margin: 4px 0 6px;
+  }
+  .stage .desc {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .connector {
+    width: 28px;
+    flex: 0 0 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 16px;
+  }
+
+  main { max-width: 720px; margin: 0 auto; padding: 8px 32px 100px; }
+  section { margin-top: 56px; }
+  section > .num-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  h2 { font-size: 26px; font-weight: 700; margin: 0 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 16.5px; font-weight: 700; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+
+  .callout {
+    border: 1px solid var(--line);
+    background: var(--paper-raised);
+    border-radius: 10px;
+    padding: 16px 18px;
+    box-shadow: var(--shadow);
+    margin: 18px 0;
+  }
+  .callout.warn { border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); background: var(--warn-soft); }
+  .callout .label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--warn);
+    margin-bottom: 6px;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .table-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 10px; }
+  .table-wrap table { min-width: 480px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    background: var(--paper-raised);
+    font-weight: 500;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; }
+
+  .stack-item { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .stack-item:last-child { border-bottom: none; }
+  .stack-item .tech { flex: 0 0 190px; font-family: "JetBrains Mono", monospace; font-size: 13.5px; color: var(--accent); font-weight: 500; }
+  .stack-item .role p { margin: 0; font-size: 15px; }
+
+  /* worked example */
+  .chat-example {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--paper-raised);
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    margin: 18px 0;
+  }
+  .chat-turn { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
+  .chat-turn:last-child { margin-bottom: 0; }
+  .chat-q {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    color: var(--ink-faint);
+  }
+  .chat-q::before { content: "Q — "; color: var(--accent); }
+  .chat-a { font-size: 15.5px; }
+  .chat-sources {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin-top: 6px;
+  }
+  .chat-sources a { color: var(--ink-soft); text-decoration: underline; text-decoration-color: var(--line); }
+  hr.divider { border: none; border-top: 1px dashed var(--line); margin: 14px 0; }
+
+  .cost-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 14px 18px;
+    background: var(--accent-soft);
+    border-radius: 10px;
+    margin-top: 14px;
+  }
+  .cost-total .label { font-size: 14px; color: var(--ink-soft); }
+  .cost-total .value { font-family: "JetBrains Mono", monospace; font-size: 20px; font-weight: 600; color: var(--accent); }
+
+  footer {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 32px 64px;
+    color: var(--ink-faint);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="eyebrow">Saunders Helpdesk Assistant — Technical Brief</div>
+  <h1>Live URL Search</h1>
+  <p class="subtitle">How the assistant answers questions directly from your tracked websites — no external search engine, no dependency on a third party being available.</p>
+  <div class="meta-row">
+    <span>Prepared for the Saunders / ICT team</span>
+    <span>Component: <code>crawl_url_search.py</code></span>
+    <span>Status: live in testing</span>
+  </div>
+</div>
+
+<div class="pipeline-wrap">
+  <div class="pipeline">
+    <div class="stage" style="--i:0">
+      <div class="num">01</div>
+      <div class="name">Tracked URLs</div>
+      <div class="desc">Read from your SharePoint URL list — the sites you've told the assistant to watch.</div>
+    </div>
+    <div class="connector">→</div>
+    <div class="stage" style="--i:1">
+      <div class="num">02</div>
+      <div class="name">Crawl</div>
+      <div class="desc">Fetches each tracked page, then its own same-domain links (product pages, articles, etc).</div>
+    </div>
+    <div class="connector">→</div>
+    <div class="stage" style="--i:2">
+      <div class="num">03</div>
+      <div class="name">Rank</div>
+      <div class="desc">Scores every page's title against the question. No AI call — pure text matching, instant and free.</div>
+    </div>
+    <div class="connector">→</div>
+    <div class="stage" style="--i:3">
+      <div class="num">04</div>
+      <div class="name">Fetch content</div>
+      <div class="desc">Downloads full text for only the top 2 matches — not the whole site.</div>
+    </div>
+    <div class="connector">→</div>
+    <div class="stage" style="--i:4">
+      <div class="num">05</div>
+      <div class="name">Generate</div>
+      <div class="desc">GPT-4o writes the answer strictly from that fetched text, and reports which page it actually used.</div>
+    </div>
+    <div class="connector">→</div>
+    <div class="stage" style="--i:5">
+      <div class="num">06</div>
+      <div class="name">Answer</div>
+      <div class="desc">Returned with the real source link and follow-up questions the assistant can actually answer.</div>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section>
+  <div class="num-label">Why this exists</div>
+  <h2>No middleman to go down</h2>
+  <p>Earlier versions of this feature searched the open web through a third-party search service to find relevant pages before answering. That worked, but it added a dependency the team doesn't control: the search provider could rate-limit or block requests, and when it did, the assistant simply stopped finding anything from the web.</p>
+  <p>This version removes that dependency entirely. It never asks anyone else's search engine anything. It goes straight to the websites already on your tracked list, reads them itself, and answers only from what it actually finds there. If a tracked site is up, the feature works — full stop.</p>
+</section>
+
+<section>
+  <div class="num-label">How it works</div>
+  <h2>Six steps, one question</h2>
+  <ol>
+    <li><strong>Tracked URLs.</strong> The assistant reads your list of tracked website URLs from SharePoint — the same list your team maintains today.</li>
+    <li><strong>Crawl.</strong> It downloads each tracked page, then reads the links on that page and follows the ones pointing to more content on the same website (product pages, articles, categories). Links to social media, login pages, carts, and search results are filtered out automatically.</li>
+    <li><strong>Rank.</strong> Every page it found — the tracked page and its sub-pages — gets scored against the question by comparing words in the title. This is plain text comparison, not an AI call, so it costs nothing and takes milliseconds.</li>
+    <li><strong>Fetch content.</strong> Only the two highest-scoring pages get their full text downloaded and cleaned up (navigation menus, footers, and scripts stripped out).</li>
+    <li><strong>Generate.</strong> That text is handed to GPT-4o with strict instructions: answer only from what's here, and say plainly which of these two pages the answer actually came from.</li>
+    <li><strong>Answer.</strong> The response includes the real page the answer was drawn from — not just whichever page happened to be searched — plus up to three follow-up questions the assistant has already confirmed it can answer from the same content.</li>
+  </ol>
+  <div class="callout warn">
+    <div class="label">Known limitation</div>
+    <p>The crawl currently goes one level deep from each tracked URL. A question that needs a very specific sub-page — one that's itself linked from a sub-page, two clicks from the tracked URL — may not be found. In practice this mostly affects narrow, multi-part questions (e.g. a specific product spec buried in a listing page's own sub-links). A second crawl level is a straightforward addition if this shows up often enough to matter.</p>
+  </div>
+</section>
+
+<section>
+  <div class="num-label">What it's built on</div>
+  <h2>The stack</h2>
+  <div class="table-wrap" style="border:none;">
+    <div class="stack-item">
+      <div class="tech">Azure Functions</div>
+      <div class="role"><p>Runs the whole flow on demand, per question — Python, Consumption plan, no server to manage or pay for while idle.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">requests + BeautifulSoup</div>
+      <div class="role"><p>Fetches each page over plain HTTP and reads its title, links, and body text — the same libraries used to build the ticket/document sync.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">RapidFuzz</div>
+      <div class="role"><p>Scores page titles against the question locally, in-process. No network call, no API cost.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">Azure OpenAI — GPT-4o</div>
+      <div class="role"><p>Writes the final answer from the fetched page text and reports exactly which source it used. The only paid AI call in this entire flow.</p></div>
+    </div>
+    <div class="stack-item">
+      <div class="tech">SharePoint (via Microsoft Graph)</div>
+      <div class="role"><p>Source of truth for which URLs are tracked — the same list your team already edits.</p></div>
+    </div>
+  </div>
+  <p style="margin-top:16px; color:var(--ink-soft); font-size:14.5px;">Notably absent: Azure AI Search and text embeddings. Those power the ticket and document search paths, but this feature doesn't touch them — ranking is done by title-matching, not vector search, which is exactly why the only per-question cost is the one GPT-4o call below.</p>
+</section>
+
+<section>
+  <div class="num-label">Cost</div>
+  <h2>What a question actually costs</h2>
+  <p>Pricing below is Microsoft's published Azure retail rate for the Australia East region, checked at the time of writing.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Meter</th><th class="num">Rate</th><th>Applies here?</th></tr></thead>
+      <tbody>
+        <tr><td>GPT-4o — input tokens</td><td class="num mono">$2.50 / 1M tokens</td><td>Yes — every question</td></tr>
+        <tr><td>GPT-4o — output tokens</td><td class="num mono">$10.00 / 1M tokens</td><td>Yes — every question</td></tr>
+        <tr><td>Text embeddings</td><td class="num mono">$0.13 / 1M tokens</td><td>No — this path skips embeddings entirely</td></tr>
+        <tr><td>Azure AI Search (Basic tier)</td><td class="num mono">$0.133 / hour (~$97/mo)</td><td>No — fixed cost shared by the ticket/document search, not added by this feature</td></tr>
+        <tr><td>Function App compute</td><td class="num mono">Free grant: 1M executions + 400,000 GB-s / month</td><td>Yes, but stays inside the free tier at helpdesk-scale traffic</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Worked example</h3>
+  <p>A typical question fetches two pages (~6,000 characters each) plus the question itself and a short answer format instruction — call it roughly 4,500 input tokens and 400 output tokens:</p>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td>Input — 4,500 tokens × $2.50 / 1M</td><td class="num mono">$0.0113</td></tr>
+        <tr><td>Output — 400 tokens × $10.00 / 1M</td><td class="num mono">$0.0040</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="cost-total">
+    <span class="label">Cost per question answered from a live website</span>
+    <span class="value">≈ $0.015 AUD*</span>
+  </div>
+  <p style="margin-top:10px; font-size:13.5px; color:var(--ink-faint);">*Converted at indicative USD/AUD rates; Azure bills in the currency of your subscription. At 5,000 questions a month through this path, that's roughly $75 — a fraction of a single support ticket's handling cost.</p>
+</section>
+
+<section>
+  <div class="num-label">See it working</div>
+  <h2>A real question, answered live</h2>
+  <p>Captured directly from the test environment — including a follow-up, to show the assistant carrying context between turns:</p>
+  <div class="chat-example">
+    <div class="chat-turn">
+      <div class="chat-q">tell me about lenovo laptops</div>
+      <div class="chat-a" style="color:var(--ink-faint); font-style:italic;">No confident match found in the tracked pages for this exact wording — the assistant reports "not found" rather than guessing.</div>
+    </div>
+    <hr class="divider">
+    <div class="chat-turn">
+      <div class="chat-q">is it good for gaming?</div>
+      <div class="chat-a">Yes, Lenovo laptops can be good for gaming, especially models like the Lenovo Legion Pro 7 and Lenovo LOQ series.<br><br>
+      — Legion Pro 7: Intel Core i9-14900HX, NVIDIA GeForce RTX 4080 16GB, 16GB DDR5 RAM, 16&Prime; WQXGA 240Hz display — built for high-performance gaming.<br>
+      — LOQ series: AMD Ryzen processors, NVIDIA GeForce RTX GPUs, 144Hz displays — a mid-range gaming option.</div>
+      <div class="chat-sources">Source: <a href="https://intaglaptops.com/collections/gaming-laptops-collection" target="_blank" rel="noopener">Gaming Laptops — intaglaptops.com</a></div>
+    </div>
+  </div>
+  <p>The second question says "it" — nothing about laptops. The assistant resolved that from the first turn, combined it with "gaming," and pulled real, specific model names and specs straight out of the fetched page text. Nothing here was invented — everything traces back to the cited source link.</p>
+</section>
+
+<section>
+  <div class="num-label">Where this fits</div>
+  <h2>One of three ways the assistant answers</h2>
+  <p>This is the last of three sources the assistant checks, in order: closed support tickets first (a real resolution beats generic documentation), then your SharePoint knowledge library, and finally — only if neither answers the question — a live look at your tracked websites, exactly as described above. The old search-engine-based version of this feature (SearXNG) remains in the codebase, disabled, as a fallback design if it's ever needed again.</p>
+</section>
+
+</main>
+
+<footer>
+  Saunders Helpdesk Assistant — internal engineering documentation.
+</footer>
+</body>
+</html>

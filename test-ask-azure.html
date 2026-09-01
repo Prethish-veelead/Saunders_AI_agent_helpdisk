@@ -7,11 +7,30 @@
   body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 16px; }
   label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: #333; }
   input { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; margin-top: 4px; }
-  button { margin-top: 16px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
-  pre { background: #111; color: #0f0; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin-top: 16px; }
+  button { padding: 10px 20px; font-size: 14px; cursor: pointer; }
   .status { color: #666; font-size: 13px; margin-top: 8px; }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
+
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-top: 16px; }
+  .toolbar button.secondary { background: none; border: 1px solid #ccc; }
+
+  #chat { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .bubble { padding: 10px 14px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+  .bubble.user { align-self: flex-end; background: #2563eb; color: #fff; }
+  .bubble.assistant { align-self: flex-start; background: #f1f1f1; color: #111; }
+  .bubble.assistant .sources { margin-top: 8px; font-size: 12px; color: #555; }
+  .bubble.assistant .sources a { color: #2563eb; }
+  .bubble.assistant .followups { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .bubble.assistant .followups button {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid #2563eb;
+    background: #fff; color: #2563eb; cursor: pointer;
+  }
+  .turn-count { font-size: 12px; color: #888; margin-top: 4px; }
+
+  details { margin-top: 20px; }
+  summary { cursor: pointer; font-size: 13px; color: #666; }
+  pre { background: #111; color: #0f0; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -31,15 +50,96 @@
   <label for="question">Question</label>
   <input id="question" type="text" placeholder="e.g. What is the ticket status flow?" />
 
-  <button onclick="ask()">Ask</button>
+  <div class="toolbar">
+    <button onclick="ask()">Ask</button>
+    <button class="secondary" onclick="resetConversation()">New conversation</button>
+    <span class="turn-count" id="turnCount"></span>
+  </div>
   <div class="status" id="status"></div>
-  <pre id="output">(response will appear here)</pre>
+
+  <div id="chat"></div>
+
+  <details>
+    <summary>Raw JSON (last response)</summary>
+    <pre id="output">(response will appear here)</pre>
+  </details>
 
 <script>
+// This page demonstrates continued-conversation support: every prior
+// Q&A pair asked here is kept in `conversationHistory` and sent back to
+// the API as the "conversation_history" field on every subsequent
+// request, so the assistant can resolve follow-ups like "what about the
+// second one?" that only make sense with the prior turn in view. The API
+// itself is stateless — it remembers nothing between calls — this page
+// is what plays the role of the caller resending history.
+let conversationHistory = [];
+
+function renderTurnCount() {
+  document.getElementById("turnCount").textContent =
+    conversationHistory.length > 0 ? `${conversationHistory.length} turn(s) in this conversation` : "";
+}
+
+function addBubble(role, contentNode) {
+  const chat = document.getElementById("chat");
+  const bubble = document.createElement("div");
+  bubble.className = `bubble ${role}`;
+  bubble.appendChild(contentNode);
+  chat.appendChild(bubble);
+  bubble.scrollIntoView({ behavior: "smooth", block: "end" });
+  return bubble;
+}
+
+function addUserBubble(question) {
+  const node = document.createElement("div");
+  node.textContent = question;
+  addBubble("user", node);
+}
+
+function addAssistantBubble(data) {
+  const node = document.createElement("div");
+
+  if (data.status === "not_found") {
+    node.textContent = "I couldn't find an answer to that.";
+  } else if (data.status === "error") {
+    node.textContent = `Error: ${data.message || "something went wrong"}`;
+  } else {
+    const answer = document.createElement("div");
+    answer.textContent = data.answer || "(no answer text)";
+    node.appendChild(answer);
+
+    if (Array.isArray(data.sources) && data.sources.length > 0) {
+      const sources = document.createElement("div");
+      sources.className = "sources";
+      sources.innerHTML = "Sources: " + data.sources.map(s =>
+        s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a>` : (s.title || "")
+      ).join(" &middot; ");
+      node.appendChild(sources);
+    }
+
+    if (Array.isArray(data.follow_up_questions) && data.follow_up_questions.length > 0) {
+      const followups = document.createElement("div");
+      followups.className = "followups";
+      data.follow_up_questions.forEach(q => {
+        const btn = document.createElement("button");
+        btn.textContent = q;
+        btn.onclick = () => {
+          document.getElementById("question").value = q;
+          ask();
+        };
+        followups.appendChild(btn);
+      });
+      node.appendChild(followups);
+    }
+  }
+
+  addBubble("assistant", node);
+}
+
 async function ask() {
   const baseUrl = document.getElementById("baseUrl").value.trim().replace(/\/$/, "");
   const funcKey = document.getElementById("funcKey").value.trim();
-  const question = document.getElementById("question").value.trim();
+  const questionInput = document.getElementById("question");
+  const question = questionInput.value.trim();
   const output = document.getElementById("output");
   const status = document.getElementById("status");
 
@@ -48,23 +148,40 @@ async function ask() {
     return;
   }
 
+  addUserBubble(question);
+  questionInput.value = "";
+
   const url = `${baseUrl}/api/ask?code=${encodeURIComponent(funcKey)}`;
   status.textContent = "Asking...";
-  output.textContent = "";
 
   try {
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, conversation_history: conversationHistory }),
     });
     const data = await resp.json();
     status.textContent = "HTTP " + resp.status;
     output.textContent = JSON.stringify(data, null, 2);
+
+    addAssistantBubble(data);
+
+    if (data.status === "answered" && data.answer) {
+      conversationHistory.push({ question, answer: data.answer });
+      renderTurnCount();
+    }
   } catch (err) {
     status.textContent = "Request failed";
     output.textContent = String(err);
   }
+}
+
+function resetConversation() {
+  conversationHistory = [];
+  document.getElementById("chat").innerHTML = "";
+  document.getElementById("output").textContent = "(response will appear here)";
+  document.getElementById("status").textContent = "Started a new conversation.";
+  renderTurnCount();
 }
 
 document.getElementById("question").addEventListener("keydown", (e) => {

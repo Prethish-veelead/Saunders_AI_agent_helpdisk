@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Crawl-and-Match Search Test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 16px; }
+  label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: #333; }
+  input { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; margin-top: 4px; }
+  button { margin-top: 16px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+  .status { color: #666; font-size: 13px; margin-top: 8px; }
+  .seeds { font-size: 13px; color: #444; margin-top: 8px; }
+  .seeds code { background: #eee; padding: 2px 5px; border-radius: 3px; word-break: break-all; }
+  .ranked { font-size: 12px; color: #666; margin-top: 8px; }
+  .answer { background: #111; color: #0f0; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin-top: 16px; border-radius: 4px; }
+  .pages { margin-top: 16px; }
+  .page-used { padding: 6px 8px; font-size: 13px; border-radius: 4px; margin-top: 6px; word-break: break-all; background: #e6f4ea; color: #1e7e34; }
+  .latency { font-size: 13px; color: #666; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <h2>Crawl-and-Match Search — answers only from your sites</h2>
+  <div class="seeds" id="seeds">Loading seed URLs...</div>
+
+  <label for="question">Question</label>
+  <input id="question" type="text" placeholder="e.g. Who founded Lenovo?" />
+
+  <button onclick="ask()">Ask</button>
+  <div class="status" id="status"></div>
+  <div class="ranked" id="ranked"></div>
+  <div class="answer" id="answer" style="display:none;"></div>
+  <div class="pages" id="pages"></div>
+  <div class="latency" id="latency"></div>
+
+<script>
+const BASE_URL = "http://localhost:8766";
+
+async function loadSeeds() {
+  try {
+    const resp = await fetch(`${BASE_URL}/domains`);
+    const data = await resp.json();
+    document.getElementById("seeds").innerHTML =
+      "Seed URLs (crawl never leaves these sites): " +
+      data.seed_urls.map(u => `<code>${u}</code>`).join(" ");
+  } catch (err) {
+    document.getElementById("seeds").textContent =
+      "Could not reach server_crawl.py at " + BASE_URL + " — is it running?";
+  }
+}
+
+async function ask() {
+  const question = document.getElementById("question").value.trim();
+  const status = document.getElementById("status");
+  const rankedEl = document.getElementById("ranked");
+  const answerEl = document.getElementById("answer");
+  const pagesEl = document.getElementById("pages");
+  const latencyEl = document.getElementById("latency");
+
+  if (!question) {
+    status.textContent = "Type a question first.";
+    return;
+  }
+
+  status.textContent = "Crawling and answering...";
+  rankedEl.innerHTML = "";
+  answerEl.style.display = "none";
+  pagesEl.innerHTML = "";
+  latencyEl.textContent = "";
+
+  try {
+    const resp = await fetch(`${BASE_URL}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      status.textContent = "Error: " + (data.error || resp.status);
+      return;
+    }
+
+    status.textContent = `HTTP ${resp.status} — ${data.candidates_considered} pages considered from the seed sites`;
+
+    rankedEl.innerHTML = "<strong>Top-ranked candidate pages (by title match):</strong><br>" +
+      data.ranked.map(r => `score=${Math.round(r.score)} — ${r.title} — <span style="word-break:break-all">${r.url}</span>`).join("<br>");
+
+    answerEl.style.display = "block";
+    answerEl.textContent = data.answer || "(no answer text returned)";
+
+    if (data.pages_used && data.pages_used.length) {
+      pagesEl.innerHTML = "<strong>Pages actually fetched and used for this answer:</strong>";
+      data.pages_used.forEach(p => {
+        const div = document.createElement("div");
+        div.className = "page-used";
+        div.innerHTML = `${p.title} — <a href="${p.url}" target="_blank" rel="noopener">${p.url}</a>`;
+        pagesEl.appendChild(div);
+      });
+    } else {
+      pagesEl.innerHTML = "<em>No page was fetched (none of the seed sites had a suitable match).</em>";
+    }
+
+    latencyEl.textContent =
+      `Latency: ${data.latency_sec}s  |  Tokens: prompt=${data.prompt_tokens} ` +
+      `completion=${data.completion_tokens} total=${data.total_tokens}`;
+  } catch (err) {
+    status.textContent = "Request failed";
+    answerEl.style.display = "block";
+    answerEl.textContent = String(err);
+  }
+}
+
+document.getElementById("question").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") ask();
+});
+
+loadSeeds();
+</script>
+</body>
+</html>

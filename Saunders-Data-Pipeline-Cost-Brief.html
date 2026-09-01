@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Pipeline &amp; Cost Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --paper: #faf9f4;
+    --paper-raised: #ffffff;
+    --ink: #1b211f;
+    --ink-soft: #57625c;
+    --ink-faint: #8b948d;
+    --line: #e1decf;
+    --accent: #0e7c71;
+    --accent-soft: #dceeea;
+    --warn: #a15c1f;
+    --warn-soft: #f3e6d6;
+    --good: #2f7a3d;
+    --good-soft: #e3f0e2;
+    --shadow: 0 1px 2px rgba(27,33,31,0.04), 0 8px 24px rgba(27,33,31,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121615; --paper-raised: #181d1b; --ink: #e9e7dd; --ink-soft: #9ca6a0;
+      --ink-faint: #6b756f; --line: #262e2b; --accent: #34d6c4; --accent-soft: #16302c;
+      --warn: #e0a458; --warn-soft: #2e2418; --good: #6fbf7a; --good-soft: #16281a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121615; --paper-raised: #181d1b; --ink: #e9e7dd; --ink-soft: #9ca6a0;
+    --ink-faint: #6b756f; --line: #262e2b; --accent: #34d6c4; --accent-soft: #16302c;
+    --warn: #e0a458; --warn-soft: #2e2418; --good: #6fbf7a; --good-soft: #16281a;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  html { background: var(--paper); }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-soft); }
+  a { color: var(--accent); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  h1, h2, h3, .display { font-family: "Archivo", system-ui, sans-serif; text-wrap: balance; }
+
+  .masthead { max-width: 960px; margin: 0 auto; padding: 64px 32px 8px; }
+  .eyebrow {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); font-weight: 500;
+  }
+  h1 { font-size: clamp(32px, 5vw, 46px); font-weight: 800; letter-spacing: -0.02em; margin: 10px 0 6px; }
+  .subtitle { color: var(--ink-soft); font-size: 18px; max-width: 64ch; margin: 0 0 8px; }
+  .meta-row {
+    display: flex; gap: 20px; flex-wrap: wrap; font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; color: var(--ink-faint); margin-top: 20px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  /* table of contents */
+  nav.toc {
+    max-width: 960px; margin: 32px auto 0; padding: 20px 32px; background: var(--paper-raised);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  }
+  nav.toc .toc-title {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-faint); margin-bottom: 10px;
+  }
+  nav.toc ol { columns: 2; column-gap: 32px; padding-left: 20px; margin: 0; font-size: 14.5px; }
+  nav.toc li { margin-bottom: 7px; break-inside: avoid; }
+  nav.toc a { text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  main { max-width: 760px; margin: 0 auto; padding: 40px 32px 100px; }
+  section { margin-top: 60px; scroll-margin-top: 24px; }
+  section > .num-label {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  h2 { font-size: 26px; font-weight: 700; margin: 0 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 16.5px; font-weight: 700; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+
+  /* diagrams */
+  .diagram-wrap { max-width: 1040px; margin: 32px auto 0; padding: 4px 32px 8px; overflow-x: auto; }
+  .diagram-label {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-faint); margin: 28px 0 10px; text-align: center;
+  }
+  .flow { display: flex; align-items: stretch; gap: 0; min-width: 900px; padding: 4px 0 20px; }
+  .node {
+    flex: 1; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 12px; box-shadow: var(--shadow);
+  }
+  .node .tag {
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--accent); margin-bottom: 4px;
+  }
+  .node .name { font-family: "Archivo", sans-serif; font-weight: 700; font-size: 13.5px; margin: 2px 0 5px; }
+  .node .desc { font-size: 11.5px; color: var(--ink-soft); line-height: 1.4; font-family: "JetBrains Mono", monospace; }
+  .arrow { width: 22px; flex: 0 0 22px; display: flex; align-items: center; justify-content: center; color: var(--accent); font-size: 15px; }
+
+  /* chunk visualization */
+  .chunk-demo {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--paper-raised);
+    box-shadow: var(--shadow); padding: 18px 20px; margin: 18px 0; overflow-x: auto;
+  }
+  .chunk-bar { display: flex; font-family: "JetBrains Mono", monospace; font-size: 12px; min-width: 600px; margin-bottom: 6px; }
+  .chunk-bar .seg {
+    padding: 6px 0; text-align: center; border-radius: 4px; margin-right: 3px; color: #fff;
+  }
+  .chunk-bar .seg.c1 { background: var(--accent); }
+  .chunk-bar .seg.c2 { background: color-mix(in srgb, var(--accent) 65%, var(--ink-soft)); }
+  .chunk-bar .overlap {
+    font-size: 10.5px; text-align: center; color: var(--warn); margin-top: 2px;
+  }
+  .chunk-caption { font-size: 13px; color: var(--ink-soft); margin-top: 10px; }
+
+  .callout {
+    border: 1px solid var(--line); background: var(--paper-raised); border-radius: 10px;
+    padding: 16px 18px; box-shadow: var(--shadow); margin: 18px 0;
+  }
+  .callout .label {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 600; color: var(--accent); margin-bottom: 6px;
+  }
+  .callout.warn .label { color: var(--warn); }
+  .callout.good .label { color: var(--good); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  .table-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 10px; }
+  .table-wrap table { min-width: 480px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: "JetBrains Mono", monospace; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--ink-faint); background: var(--paper-raised); font-weight: 500;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; }
+  td.mono { font-family: "JetBrains Mono", monospace; font-size: 13.5px; }
+
+  /* lifecycle events */
+  .lifecycle-item { display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .lifecycle-item:last-child { border-bottom: none; }
+  .lifecycle-item .event {
+    flex: 0 0 110px; font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 600;
+  }
+  .lifecycle-item.added .event { color: var(--good); }
+  .lifecycle-item.removed .event { color: var(--warn); }
+  .lifecycle-item.updated .event { color: var(--accent); }
+  .lifecycle-item .detail p { margin: 0; font-size: 15px; }
+
+  /* worked-example math trail */
+  .math-trail { margin: 18px 0; }
+  .math-step {
+    display: flex; align-items: baseline; gap: 14px; padding: 12px 0; border-bottom: 1px dashed var(--line);
+  }
+  .math-step:last-child { border-bottom: none; }
+  .math-step .step-label { flex: 1; font-size: 14.5px; color: var(--ink-soft); }
+  .math-step .step-value { font-family: "JetBrains Mono", monospace; font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .math-final {
+    display: flex; justify-content: space-between; align-items: baseline; padding: 14px 18px;
+    background: var(--accent-soft); border-radius: 10px; margin-top: 8px;
+  }
+  .math-final .label { font-size: 14px; color: var(--ink-soft); }
+  .math-final .value { font-family: "JetBrains Mono", monospace; font-size: 22px; font-weight: 700; color: var(--accent); }
+
+  /* mini pipeline for web url search */
+  .mini-flow { display: flex; align-items: stretch; gap: 0; min-width: 780px; padding: 4px 0 8px; }
+  .mini-flow .node { padding: 12px 10px; }
+  .mini-flow .node .name { font-size: 12.5px; }
+  .mini-flow .node .desc { font-size: 10.5px; }
+  .mini-arrow { width: 18px; flex: 0 0 18px; display: flex; align-items: center; justify-content: center; color: var(--accent); font-size: 13px; }
+
+  footer {
+    max-width: 760px; margin: 0 auto; padding: 0 32px 64px; color: var(--ink-faint); font-size: 13px;
+  }
+  footer a { color: var(--ink-faint); text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="eyebrow">Technical Deep Dive</div>
+  <h1>Data Pipeline &amp; Cost Model</h1>
+  <p class="subtitle">Where your data goes from the moment it's synced, exactly how it's processed and searched, what happens when it changes, and precisely what it costs — worked with real numbers, not estimates.</p>
+  <div class="meta-row">
+    <span>Prepared for the Saunders / ICT team</span>
+    <span>Companion to: Saunders Helpdesk Assistant · Live URL Search</span>
+    <span>Last updated: 29 Aug 2026</span>
+  </div>
+</div>
+
+<nav class="toc" aria-label="Table of contents">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#flow">The end-to-end flow at a glance</a></li>
+    <li><a href="#why-azure">Why these Azure services</a></li>
+    <li><a href="#saved">Where data is saved</a></li>
+    <li><a href="#processed">How data is processed</a></li>
+    <li><a href="#stored">Where data — and embeddings — are stored</a></li>
+    <li><a href="#lifecycle">Adding, updating, and deleting content</a></li>
+    <li><a href="#search">How search works (stored vs. live)</a></li>
+    <li><a href="#weburl">Web URL search, in depth</a></li>
+    <li><a href="#generation">How responses are generated</a></li>
+    <li><a href="#ai-tokens">What AI is used, and where tokens flow</a></li>
+    <li><a href="#embed-cost">Embedding cost per document</a></li>
+    <li><a href="#worked-example">Worked example — a 30-page document</a></li>
+  </ol>
+</nav>
+
+<div class="diagram-wrap" id="flow">
+  <div class="diagram-label">Background — every 15 min (tickets) / every hour (library docs)</div>
+  <div class="flow">
+    <div class="node"><div class="tag">01</div><div class="name">SharePoint</div><div class="desc">Ticket fields or a library file (.pdf/.docx/.html/.md/.pptx)</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">02</div><div class="name">Dedup check</div><div class="desc">SHA-256 of the full text — unchanged? skip everything below.</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">03</div><div class="name">Extract text</div><div class="desc">Format-specific reader pulls plain text out of the file</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">04</div><div class="name">Chunk</div><div class="desc">1,000-char pieces, 150-char overlap, word-safe</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">05</div><div class="name">Embed</div><div class="desc">One embedding call per chunk</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">06</div><div class="name">Index</div><div class="desc">Upserted into Azure AI Search, ready to be found</div></div>
+  </div>
+
+  <div class="diagram-label">Foreground — every time someone asks a question</div>
+  <div class="flow">
+    <div class="node"><div class="tag">Tier 1</div><div class="name">Closed tickets</div><div class="desc">Stored index — hybrid keyword + vector search</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">Tier 2</div><div class="name">Your website</div><div class="desc">Live — direct crawl, no search engine, no index</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">Tier 3</div><div class="name">Library + tickets</div><div class="desc">Stored index — broader combined search</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">Generate</div><div class="name">GPT-4o</div><div class="desc">Answers strictly from what was found, cites its real source</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">Reply</div><div class="name">Answer</div><div class="desc">Text + real source + follow-ups it can answer</div></div>
+  </div>
+</div>
+
+<main>
+
+<section id="why-azure">
+  <div class="num-label">Platform choice</div>
+  <h2>Why these Azure services</h2>
+  <p>Every Azure resource in this system was picked for a specific reason, not by default:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Service</th><th>Why this one</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Azure Functions<br><span class="mono" style="font-size:12px;color:var(--ink-faint);">Consumption plan</span></td>
+          <td>No server to provision, patch, or pay for while idle. A helpdesk's traffic is bursty — busy during work hours, near-silent overnight — and Consumption billing matches that shape exactly: you pay per execution, not per hour of an always-on machine.</td>
+        </tr>
+        <tr>
+          <td>Azure AI Search<br><span class="mono" style="font-size:12px;color:var(--ink-faint);">Basic tier</span></td>
+          <td>The only Azure-native service that does keyword <em>and</em> vector search in one query, out of the box — avoids standing up and maintaining a separate vector database. Basic tier (not Free) is the smallest tier with the SLA and replica support a production system actually needs.</td>
+        </tr>
+        <tr>
+          <td>Azure OpenAI<br><span class="mono" style="font-size:12px;color:var(--ink-faint);">GPT-4o + text-embedding-3-large</span></td>
+          <td>Keeps both the answering model and the embedding model inside the same Azure region and tenant as everything else — ticket and document content never has to leave Azure's boundary to reach a third-party AI API.</td>
+        </tr>
+        <tr>
+          <td>Microsoft Graph / SharePoint<br><span class="mono" style="font-size:12px;color:var(--ink-faint);">Managed Identity</span></td>
+          <td>SharePoint is already your system of record — no migration, no new place for your team to maintain content. Managed Identity means there's no client secret stored anywhere to leak or rotate.</td>
+        </tr>
+        <tr>
+          <td>Application Insights</td>
+          <td>Bundled with Azure Functions at no extra setup — gives full request and error tracing without adding a separate monitoring product to the stack.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="saved">
+  <div class="num-label">1 — Initial capture</div>
+  <h2>Where data is saved</h2>
+  <p>Nothing is copied into a separate raw-file store. SharePoint stays the single system of record for everything — tickets, ticket comments, and library documents. Each sync run reads directly from SharePoint (via Microsoft Graph), and the only thing that gets written anywhere new is the processed, searchable version described below — the original document or ticket is never duplicated or modified.</p>
+  <p>This means there's exactly one place your team edits content — SharePoint itself — and the assistant's knowledge simply catches up on the next scheduled sync.</p>
+</section>
+
+<section id="processed">
+  <div class="num-label">2 — Ingestion pipeline</div>
+  <h2>How data is processed</h2>
+  <p>All of this runs as Azure Function executions — inside Azure's own compute, in the Australia East region, the same region as every other resource in this system. Nothing is processed on any local machine or outside Azure.</p>
+  <p>Before anything is embedded, plain text has to be pulled out of whatever format the source document is in:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Format</th><th>Extracted with</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">.pdf</td><td>pdfplumber — reads text page by page</td></tr>
+        <tr><td class="mono">.docx</td><td>python-docx — reads each paragraph</td></tr>
+        <tr><td class="mono">.html</td><td>trafilatura — strips markup, keeps the real content</td></tr>
+        <tr><td class="mono">.md</td><td>Markdown → HTML → plain text</td></tr>
+        <tr><td class="mono">.pptx</td><td>python-pptx — reads text from every slide</td></tr>
+        <tr><td>Ticket fields</td><td>No extraction needed — subject, description, and comments are already plain text</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Once it's plain text, it's split into overlapping <strong>chunks</strong>: 1,000 characters each, with 150 characters shared between consecutive chunks, always breaking on a word boundary rather than mid-word. The overlap exists so a fact sitting right at a chunk boundary is still fully readable from at least one chunk — nothing gets awkwardly cut in half.</p>
+  <div class="chunk-demo">
+    <div class="chunk-bar">
+      <div class="seg c1" style="flex: 0 0 340px;">Chunk 1 — characters 0–1,000</div>
+      <div class="seg c2" style="flex: 0 0 340px; margin-left: -60px;">Chunk 2 — characters 850–1,850</div>
+    </div>
+    <div class="overlap" style="margin-left: 280px;">↑ 150-character overlap ↑</div>
+    <p class="chunk-caption">Chunk 2 starts 850 characters into the text (1,000 − 150 overlap), so the last 150 characters of chunk 1 reappear at the start of chunk 2. Every chunk after the first works the same way.</p>
+  </div>
+  <p>Before any of this runs, a SHA-256 hash of the entire document's text is compared against the hash stored from the last successful sync. If they match, nothing changed — the whole extract/chunk/embed sequence is skipped entirely for that document. This is what keeps a 15-minute ticket sync cheap: most runs find nothing new to do.</p>
+</section>
+
+<section id="stored">
+  <div class="num-label">3 — The index</div>
+  <h2>Where data — and embeddings — are stored</h2>
+  <p>Every chunk becomes one record in the Azure AI Search index (<code>saunders-ai-search</code>), with:</p>
+  <ul>
+    <li>Its text content and title, both keyword-searchable</li>
+    <li>Its embedding — a list of 3,072 numbers — stored directly on that same record, in a dedicated vector field. There's no separate "embeddings database"; the vector lives right alongside the text it was generated from.</li>
+    <li><code>source_type</code> — <code>ticket</code>, <code>library_doc</code>, or <code>live_url</code> — so a search can be restricted to just one</li>
+    <li><code>content_hash</code> — the dedup fingerprint described above</li>
+    <li>Category, sub-category, status, and source URL, for filtering and citation</li>
+  </ul>
+  <p>The vector field uses an algorithm called HNSW, which is what lets a meaning-based search return in milliseconds even as the index grows — it doesn't have to compare against every single chunk one by one. This entire index — and everything it stores — lives inside your own Azure subscription, in Australia East; it isn't a third-party or shared service.</p>
+</section>
+
+<section id="lifecycle">
+  <div class="num-label">4 — Keeping the index honest</div>
+  <h2>Adding, updating, and deleting content</h2>
+  <p>Every sync run reconciles the index against whatever is currently in SharePoint at that moment — it isn't purely additive:</p>
+
+  <div class="lifecycle-item added">
+    <div class="event">ADDED</div>
+    <div class="detail"><p>Picked up on the very next scheduled sync (≤15 min for tickets, ≤1 hour for library docs) — chunked, embedded, and indexed automatically. No action needed from your team.</p></div>
+  </div>
+  <div class="lifecycle-item updated">
+    <div class="event">EDITED</div>
+    <div class="detail"><p>The content fingerprint (SHA-256 hash) no longer matches what was indexed last time, so the document is fully re-chunked, re-embedded, and re-indexed with the new content on the next sync, replacing the old version.</p></div>
+  </div>
+  <div class="lifecycle-item removed">
+    <div class="event">DELETED</div>
+    <div class="detail"><p>Every sync compares the full list of items currently in SharePoint against what's currently indexed. Anything indexed that's no longer present — or, for tickets specifically, no longer Closed/Resolved (e.g. reopened) — has every one of its chunks removed from the index on that same run. Nothing is left waiting for manual cleanup.</p></div>
+  </div>
+
+  <div class="callout warn" style="margin-top:20px;">
+    <div class="label">One nuance worth flagging</div>
+    <p>An edit that keeps a document roughly the same length (or makes it longer) is replaced cleanly with no trace of the old version. In the less common case where an edit makes a document <em>much shorter</em> — few enough chunks that the new version has fewer pieces than the old one did — the re-index step overwrites the chunks that still exist, but doesn't separately go back and remove the small number of extra chunks left over from the longer previous version. This is a minor edge case, not something we've seen cause a visible issue, and it fully resolves itself the moment that document is eventually deleted outright. Flagging it here for full transparency, not as an active problem.</p>
+  </div>
+</section>
+
+<section id="search">
+  <div class="num-label">5 — Retrieval</div>
+  <h2>How search works — stored vs. live</h2>
+  <div class="callout good">
+    <div class="label">The key distinction</div>
+    <p>Tickets and library documents are <strong>always</strong> answered from the stored, pre-synced index — never a live lookup against SharePoint at the moment someone asks. That's what keeps those answers fast: a search query against an already-built index, not a round-trip to SharePoint itself. The <em>only</em> part of the system that does anything "live" is Tier 2 — your website — covered in full below.</p>
+  </div>
+  <p>For tickets and library docs, every question runs through <strong>one</strong> search call that combines two techniques at once:</p>
+  <ul>
+    <li><strong>Keyword search</strong> — the classic "does this text contain these words" match</li>
+    <li><strong>Vector search</strong> — the question is embedded the same way documents are, then compared by meaning, so a question can match a chunk that never uses the exact same words</li>
+  </ul>
+  <p>Azure AI Search fuses both result sets into one ranking automatically. The top 5 matching chunks come back; up to 3 make it into the final answer's cited sources.</p>
+  <h3>How the system decides which tier to use</h3>
+  <p>There's no upfront step that classifies a question as "this is a website question" or "this is a library question." Instead, all three tiers are simply tried <strong>in a fixed order</strong> on every single question — tickets, then website, then library + tickets combined — and whichever one is the <em>first</em> to produce a genuinely complete answer is used. The others are never even attempted once one succeeds. If a topic happens to live in both a ticket and the library, the ticket wins every time, purely because it's tried first — not because of any smarter routing decision.</p>
+</section>
+
+<section id="weburl">
+  <div class="num-label">6 — Tier 2, in depth</div>
+  <h2>Web URL search</h2>
+  <p>This is the one search path that never touches the index, never calls the embedding model, and never asks a third-party search engine anything. Every time it runs, it goes out and reads your actual tracked pages fresh:</p>
+  <div class="diagram-wrap" style="padding:4px 0 8px; margin: 18px auto;">
+    <div class="mini-flow">
+      <div class="node"><div class="tag">01</div><div class="name">Tracked URLs</div><div class="desc">Read from your SharePoint URL list</div></div>
+      <div class="mini-arrow">→</div>
+      <div class="node"><div class="tag">02</div><div class="name">Crawl</div><div class="desc">Each tracked page + its own same-domain links</div></div>
+      <div class="mini-arrow">→</div>
+      <div class="node"><div class="tag">03</div><div class="name">Rank</div><div class="desc">Title vs. question, local text match — no AI</div></div>
+      <div class="mini-arrow">→</div>
+      <div class="node"><div class="tag">04</div><div class="name">Fetch content</div><div class="desc">Full text of only the top 2 matches</div></div>
+      <div class="mini-arrow">→</div>
+      <div class="node"><div class="tag">05</div><div class="name">Generate</div><div class="desc">GPT-4o answers from that content only</div></div>
+      <div class="mini-arrow">→</div>
+      <div class="node"><div class="tag">06</div><div class="name">Answer</div><div class="desc">Real source link + follow-ups</div></div>
+    </div>
+  </div>
+  <p>Details worth knowing:</p>
+  <ul>
+    <li><strong>Crawl.</strong> Every tracked page's own links are followed too (up to 30 per tracked page), as long as they point to the same website. Links to social media, login pages, shopping carts, and search-result pages are filtered out automatically — they'd otherwise pollute the results with generic titles like "Search" or "Cart."</li>
+    <li><strong>Rank.</strong> Every candidate page's <em>title</em> is scored against the question using local fuzzy text matching (a library called RapidFuzz) — this step costs nothing and takes milliseconds, since it's plain text comparison, not an AI call.</li>
+    <li><strong>Fetch content.</strong> Only the top 2 ranked pages get their full text downloaded and cleaned up (navigation menus, footers, and scripts stripped out) — not the whole website, keeping this step fast even on a large site.</li>
+    <li><strong>Generate.</strong> GPT-4o gets those 2 pages' real text and must answer strictly from it, reporting exactly which one the answer actually came from — the same citation safeguard used everywhere else in the system.</li>
+  </ul>
+  <div class="callout warn">
+    <div class="label">Known limitation</div>
+    <p>The crawl currently goes one level deep from each tracked URL. A question that needs a very specific sub-page — one that's itself linked from a page the crawl already found, two clicks from the original tracked URL — may not be found. This mostly affects narrow, multi-part questions. A second crawl level is a straightforward addition if this turns out to matter often enough in practice.</p>
+  </div>
+  <p>For the complete mechanics — real worked examples, the exact tunable limits, and a live before/after trace — see the companion brief, <em>Live URL Search</em>.</p>
+</section>
+
+<section id="generation">
+  <div class="num-label">7 — Answering</div>
+  <h2>How responses are generated</h2>
+  <p>Whichever tier finds a match hands its results — as numbered reference chunks — to GPT-4o in a single call, with strict instructions: answer only from what's here, and report exactly which numbered reference the answer actually came from. That self-reported number is what decides the source shown to the user, not just whichever chunk happened to score highest in search — this is the fix that stops a ticket link from ever being shown next to an answer that actually came from a library document.</p>
+  <p>If the caller includes prior turns from the same conversation, GPT-4o also uses those to understand what the current question means (resolving "it," "that one," and similar) — but never as a substitute for the actual reference content. And a closed ticket that's merely on-topic, without giving a real usable fix, is treated the same as no answer at all, so a better source gets a real chance further down the chain.</p>
+</section>
+
+<section id="ai-tokens">
+  <div class="num-label">8 — Models &amp; token flow</div>
+  <h2>What AI is used, and how much it reads/writes</h2>
+  <p>Two Azure OpenAI models do all the work in this system — nothing else calls an AI model:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Where</th><th>Model</th><th>Typical input</th><th>Typical output</th></tr></thead>
+      <tbody>
+        <tr><td>Ticket-first check</td><td>GPT-4o</td><td>Up to 5 ticket chunks (~250 tokens each) + prompt</td><td>~200–500 tokens</td></tr>
+        <tr><td>Website search (Tier 2)</td><td>GPT-4o</td><td>Up to 2 fetched pages (~1,500 tokens each) + prompt</td><td>~300–500 tokens</td></tr>
+        <tr><td>Library + ticket fallback</td><td>GPT-4o</td><td>Up to 5 merged chunks + prompt</td><td>~300–500 tokens</td></tr>
+        <tr><td>Question embedding</td><td>text-embedding-3-large</td><td>The question itself (~10–20 tokens)</td><td>A 3,072-number vector</td></tr>
+        <tr><td>Chunk embedding (sync)</td><td>text-embedding-3-large</td><td>One 1,000-char chunk (~250 tokens)</td><td>A 3,072-number vector</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:14.5px; color:var(--ink-soft);">Notably, the website-search path (Tier 2) never calls the embedding model at all — its ranking step is plain text matching, done locally, with no AI cost.</p>
+</section>
+
+<section id="embed-cost">
+  <div class="num-label">9 — Cost formula</div>
+  <h2>Embedding cost per document</h2>
+  <p>The formula behind every number in this document:</p>
+  <div class="callout">
+    <p><strong>characters ÷ 4 ≈ tokens</strong>, then <strong>tokens × $0.13 per 1,000,000 = embedding cost</strong></p>
+    <p>($0.13/1M tokens is Microsoft's published rate for text-embedding-3-large, Australia East, at the time of writing.)</p>
+  </div>
+  <p>Apply it to any document: estimate its character count, divide by 4 for a token estimate, multiply by the rate above. The worked example below walks through exactly this for a realistic document.</p>
+</section>
+
+<section id="worked-example">
+  <div class="num-label">10 — Full worked example</div>
+  <h2>A 30-page document, start to finish</h2>
+  <p>Assuming a typical business document at roughly 3,000 characters per page (~500 words/page — actual density varies by document):</p>
+  <div class="math-trail">
+    <div class="math-step"><span class="step-label">Total text — 30 pages × 3,000 characters</span><span class="step-value">90,000 characters</span></div>
+    <div class="math-step"><span class="step-label">Chunks — 1,000 chars each, 850-char step after the first</span><span class="step-value">≈ 106 chunks</span></div>
+    <div class="math-step"><span class="step-label">Tokens embedded — 106 chunks × ~250 tokens</span><span class="step-value">≈ 26,500 tokens</span></div>
+    <div class="math-step"><span class="step-label">Embedding cost — 26,500 × $0.13 / 1,000,000</span><span class="step-value">≈ $0.0034</span></div>
+    <div class="math-step"><span class="step-label">Storage — 106 chunks × ~13KB (vector + text)</span><span class="step-value">≈ 1.4 MB</span></div>
+  </div>
+  <div class="math-final">
+    <span class="label">Total cost to fully embed and index this document</span>
+    <span class="value">≈ $0.0034</span>
+  </div>
+  <p style="margin-top:14px;">That's roughly a third of a cent — one-time, at first sync. What happens afterward:</p>
+  <ul>
+    <li><strong>Every re-sync of this same document, unchanged:</strong> $0 — the SHA-256 dedup check skips it entirely, whether the sync runs every 15 minutes or once a week.</li>
+    <li><strong>Every search that happens to match this document:</strong> effectively $0 marginal cost — search queries are covered by the fixed Azure AI Search monthly fee, not billed per query. The only real cost is the same GPT-4o generation cost as any other question (≈$0.015, as established in the companion overview) — this document being one of many candidates changes nothing about that cost.</li>
+    <li><strong>Storage:</strong> ~1.4MB is a rounding error against the index's overall capacity — thousands of documents this size fit comfortably within the Basic tier.</li>
+  </ul>
+  <div class="callout warn">
+    <div class="label">The one real trade-off</div>
+    <p>The 150-character overlap between chunks means a small amount of text gets embedded twice on purpose — this is what the "chunks × ~250 tokens" math above already includes. It's a deliberate design choice: slightly higher embedding cost (a fraction of a cent either way) in exchange for never losing a fact that happens to sit right at a chunk boundary.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  Saunders Helpdesk Assistant — internal engineering documentation. Companion to <em>Saunders Helpdesk Assistant</em> (system overview) and <em>Live URL Search</em> (website search deep dive).
+</footer>
+</body>
+</html>

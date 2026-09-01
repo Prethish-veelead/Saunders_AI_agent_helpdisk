@@ -810,7 +810,7 @@ async def live_url_answer(question: str, config: dict) -> Optional[dict]:
     # live_url_answer are deferred (see helpdesk_answer.answer_question)
     # specifically to avoid a module-level circular import between the two
     # files. By call time both modules are fully loaded.
-    from helpdesk_answer import generate_structured_response
+    from helpdesk_answer import generate_structured_response, resolve_valid_follow_ups
 
     logger.info("live_url_answer: STARTING for question: %s", question[:100])
 
@@ -897,5 +897,5 @@ async def live_url_answer(question: str, config: dict) -> Optional[dict]:
         "subcategory": structured.get("sub_category", ""),
         "source": "live_url",
         "sources": sources,
-        "follow_up_questions": structured.get("follow_up_questions", []),
+        "follow_up_questions": resolve_valid_follow_ups(chunks, structured.get("follow_up_questions")),
     }

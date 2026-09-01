@@ -14,9 +14,6 @@
     "AZURE_OPENAI_API_VERSION": "2024-08-01-preview",
     "AZURE_OPENAI_EMBEDDING_DEPLOYMENT": "text-embedding-3-large",
 
-    "AZURE_TENANT_ID": "<your-entra-tenant-id>",
-    "SHAREPOINT_CLIENT_ID": "<your-app-registration-client-id>",
-    "SHAREPOINT_CLIENT_SECRET": "<your-app-registration-client-secret>",
     "SHAREPOINT_SITE_ID": "",
     "SHAREPOINT_HOSTNAME": "contoso.sharepoint.com",
     "SHAREPOINT_SITE_PATH": "/sites/Helpdesk",
@@ -30,6 +27,8 @@
     "LIST_FIELD_SUBCATEGORY": "KBSubCategory",
     "LIST_FIELD_CATEGORY_NAME": "CategoryName",
     "LIST_FIELD_SUBCATEGORY_NAME": "SubCategoryName",
+    "LIST_FIELD_LIBRARY_STATUS": "ArticleStatus",
+    "LIBRARY_PUBLISHED_STATUS_VALUE": "Published",
     "AZURE_OPENAI_CLASSIFY_DEPLOYMENT": "gpt-4o-mini",
 
     "LIBRARY_SYNC_CRON": "0 0 * * * *",

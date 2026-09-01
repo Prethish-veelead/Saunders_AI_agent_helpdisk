@@ -148,10 +148,106 @@ def test_not_found_short_circuits_cleanly():
           f"got {result2}")
 
 
+# --------------------------------------------------------------------------
+# (d) The actual bug fix: source attribution follows the model's citation,
+#     not raw retrieval score — a ticket chunk can outscore a library
+#     chunk while the answer text actually came from the library chunk.
+# --------------------------------------------------------------------------
+
+def test_cited_chunk_wins_over_higher_scoring_uncited_chunk():
+    print("\n--- Citation-based source wins even when a different chunk scores higher ---")
+
+    # Reproduces the real reported bug: a ticket chunk scores higher than
+    # the library chunk the answer actually came from. Reference numbering
+    # is 1-based and matches chunk list order (chunk 1 = ticket, chunk 2 =
+    # library) — same as _build_context_block's own numbering.
+    chunks = [
+        {"chunk_id": "t1", "page_id": "ticket-page", "title": "Some unrelated ticket", "url": "",
+         "source_type": "ticket", "category": "IT", "sub_category": "Network", "@search.score": 9.0},
+        {"chunk_id": "l1", "page_id": "lib-page", "title": "KB_Connecting_to_VPN.docx",
+         "url": "https://example.sharepoint.com/KB_Connecting_to_VPN.docx",
+         "source_type": "library_doc", "category": "IT", "sub_category": "VPN Access", "@search.score": 2.0},
+    ]
+    structured = {
+        "not_found": False, "subject": "how to fix vpn", "description": "d",
+        "answer": "Open GlobalProtect and connect to vpn.saundersintl.com.",
+        "answer_reference_numbers": [2],  # cites the library chunk, NOT the higher-scoring ticket
+        "category": "IT", "sub_category": "VPN Access",
+        "follow_up_questions": [],
+    }
+
+    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured):
+        result = helpdesk_answer._generate_and_format("how to fix vpn", chunks)
+
+    check("source is library_doc, not the higher-scoring ticket",
+          result.get("source") == "library_doc", f"got {result.get('source')}")
+    check("sources[0] is the actual cited library doc URL",
+          result["sources"][0]["url"] == "https://example.sharepoint.com/KB_Connecting_to_VPN.docx",
+          f"got {result.get('sources')}")
+    check("the ticket page is NOT in sources at all",
+          all(s["source_type"] != "ticket" for s in result["sources"]), f"got {result.get('sources')}")
+
+
+def test_invalid_reference_numbers_fall_back_to_score_ranking():
+    print("\n--- Invalid/out-of-range answer_reference_numbers falls back to score ranking ---")
+
+    chunks = [
+        {"chunk_id": "a", "page_id": "a-page", "title": "Page A", "url": "", "source_type": "ticket",
+         "category": "IT", "sub_category": "X", "@search.score": 5.0},
+    ]
+    structured = {
+        "not_found": False, "subject": "s", "description": "d", "answer": "a",
+        "answer_reference_numbers": [99],  # out of range — only 1 chunk exists
+        "category": "IT", "sub_category": "X", "follow_up_questions": [],
+    }
+
+    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured):
+        result = helpdesk_answer._generate_and_format("some question", chunks)
+
+    check("falls back to the only available chunk via score ranking",
+          result.get("source") == "ticket", f"got {result}")
+
+
+def test_follow_up_without_valid_reference_is_dropped():
+    print("\n--- A follow-up question with no valid reference_number is dropped ---")
+
+    chunks = [
+        {"chunk_id": "c1", "page_id": "p1", "title": "VPN Guide", "url": "https://example.com/vpn",
+         "source_type": "library_doc", "category": "IT", "sub_category": "VPN", "@search.score": 5.0},
+    ]
+    structured = {
+        "not_found": False, "subject": "s", "description": "d", "answer": "Use GlobalProtect.",
+        "answer_reference_numbers": [1],
+        "category": "IT", "sub_category": "VPN",
+        "follow_up_questions": [
+            {"question": "What is the portal address?", "reference_number": 1},  # valid
+            {"question": "A second question also citing reference 1", "reference_number": 1},  # valid
+            {"question": "Missing reference entirely"},  # malformed — no reference_number key
+            {"question": "Points past the end", "reference_number": 7},  # out of range
+            "just a plain string, not a dict",  # malformed shape entirely
+        ],
+    }
+
+    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured):
+        result = helpdesk_answer._generate_and_format("how do I connect to vpn", chunks)
+
+    follow_ups = result.get("follow_up_questions", [])
+    check("only the 2 structurally-valid follow-ups survive (both cite reference 1)",
+          len(follow_ups) == 2, f"got {follow_ups}")
+    check("the malformed/out-of-range ones are gone",
+          "Missing reference entirely" not in follow_ups
+          and "Points past the end" not in follow_ups
+          and "just a plain string, not a dict" not in follow_ups,
+          f"got {follow_ups}")
+
+
 if __name__ == "__main__":
     test_dedupe_and_top_three()
     test_category_matches_top_ranked_source()
     test_not_found_short_circuits_cleanly()
+    test_cited_chunk_wins_over_higher_scoring_uncited_chunk()
+    test_invalid_reference_numbers_fall_back_to_score_ranking()
+    test_follow_up_without_valid_reference_is_dropped()
 
     print("\n" + "=" * 60)
     if FAILURES:

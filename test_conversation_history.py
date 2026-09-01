@@ -83,6 +83,39 @@ def test_no_citation_markers_in_answer():
 
 
 # --------------------------------------------------------------------------
+# (a2) require_actionable_resolution adds the "don't return an incomplete
+# ticket resolution" rule to the prompt, only when explicitly requested
+# --------------------------------------------------------------------------
+
+def test_actionable_resolution_rule_included_only_when_requested():
+    print("\n--- (a2) require_actionable_resolution adds the incomplete-ticket-resolution rule ---")
+
+    with patch.object(helpdesk_answer, "AZURE_OPENAI_ENDPOINT", "https://fake.openai.azure.com"), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_API_KEY", "fake-key"), \
+         patch("helpdesk_answer.requests.post", return_value=_mock_openai_response()) as mock_post:
+        helpdesk_answer.generate_structured_response(
+            "how do I fix my vpn", CHUNKS, require_actionable_resolution=True
+        )
+    system_prompt = mock_post.call_args.kwargs["json"]["messages"][0]["content"]
+    check(
+        "the incomplete-ticket-resolution rule is present when require_actionable_resolution=True",
+        "does not give the user a complete, actionable way to fix the issue" in system_prompt,
+        f"prompt={system_prompt!r}",
+    )
+
+    with patch.object(helpdesk_answer, "AZURE_OPENAI_ENDPOINT", "https://fake.openai.azure.com"), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_API_KEY", "fake-key"), \
+         patch("helpdesk_answer.requests.post", return_value=_mock_openai_response()) as mock_post:
+        helpdesk_answer.generate_structured_response("how do I fix my vpn", CHUNKS)
+    system_prompt = mock_post.call_args.kwargs["json"]["messages"][0]["content"]
+    check(
+        "the rule is absent by default (require_actionable_resolution=False)",
+        "does not give the user a complete, actionable way to fix the issue" not in system_prompt,
+        f"prompt={system_prompt!r}",
+    )
+
+
+# --------------------------------------------------------------------------
 # (b) conversation_history is included in the constructed prompt
 # --------------------------------------------------------------------------
 
@@ -186,6 +219,7 @@ def test_malformed_history_entries_skipped():
 
 if __name__ == "__main__":
     test_no_citation_markers_in_answer()
+    test_actionable_resolution_rule_included_only_when_requested()
     test_conversation_history_included_in_prompt()
     test_no_history_matches_prior_prompt_shape()
     test_malformed_history_entries_skipped()

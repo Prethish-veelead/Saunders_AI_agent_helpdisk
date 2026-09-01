@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bing-Grounded Search Test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 16px; }
+  label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: #333; }
+  input { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; margin-top: 4px; }
+  button { margin-top: 16px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+  .status { color: #666; font-size: 13px; margin-top: 8px; }
+  .domains { font-size: 13px; color: #444; margin-top: 8px; }
+  .domains code { background: #eee; padding: 2px 5px; border-radius: 3px; }
+  .query { font-size: 12px; color: #666; margin-top: 8px; font-family: monospace; word-break: break-all; }
+  .answer { background: #111; color: #0f0; padding: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin-top: 16px; border-radius: 4px; }
+  .citations { margin-top: 16px; }
+  .citation { padding: 6px 8px; font-size: 13px; border-radius: 4px; margin-top: 6px; word-break: break-all; }
+  .pass { background: #e6f4ea; color: #1e7e34; }
+  .fail { background: #fdecea; color: #c0392b; }
+  .badge { font-weight: 700; margin-right: 6px; }
+  .latency { font-size: 13px; color: #666; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <h2>Bing-Grounded Search — domain-scoped test</h2>
+  <div class="domains" id="domains">Loading domains under test...</div>
+
+  <label for="question">Question</label>
+  <input id="question" type="text" placeholder="e.g. How do I reset a laptop to factory settings?" />
+
+  <button onclick="ask()">Ask</button>
+  <div class="status" id="status"></div>
+  <div class="query" id="query"></div>
+  <div class="answer" id="answer" style="display:none;"></div>
+  <div class="citations" id="citations"></div>
+  <div class="latency" id="latency"></div>
+
+<script>
+const BASE_URL = "http://localhost:8765";
+
+async function loadDomains() {
+  try {
+    const resp = await fetch(`${BASE_URL}/domains`);
+    const data = await resp.json();
+    document.getElementById("domains").innerHTML =
+      "Domains under test: " + data.domains.map(d => `<code>${d}</code>`).join(" ");
+  } catch (err) {
+    document.getElementById("domains").textContent =
+      "Could not reach server.py at " + BASE_URL + " — is it running?";
+  }
+}
+
+async function ask() {
+  const question = document.getElementById("question").value.trim();
+  const status = document.getElementById("status");
+  const queryEl = document.getElementById("query");
+  const answerEl = document.getElementById("answer");
+  const citationsEl = document.getElementById("citations");
+  const latencyEl = document.getElementById("latency");
+
+  if (!question) {
+    status.textContent = "Type a question first.";
+    return;
+  }
+
+  status.textContent = "Asking...";
+  queryEl.textContent = "";
+  answerEl.style.display = "none";
+  citationsEl.innerHTML = "";
+  latencyEl.textContent = "";
+
+  try {
+    const resp = await fetch(`${BASE_URL}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      status.textContent = "Error: " + (data.error || resp.status);
+      return;
+    }
+
+    status.textContent = "HTTP " + resp.status;
+    queryEl.textContent = "Scoped query sent: " + data.query;
+    answerEl.style.display = "block";
+    answerEl.textContent = data.annotated_answer || data.answer || "(no answer text returned)";
+
+    if (data.sources && data.sources.length) {
+      citationsEl.innerHTML = "<strong>Sources (this is where each [n] in the answer comes from):</strong>";
+      data.sources.forEach(s => {
+        const isPass = data.citations_pass.includes(s.url);
+        const div = document.createElement("div");
+        div.className = "citation " + (isPass ? "pass" : "fail");
+        div.innerHTML =
+          `<span class="badge">[${s.n}] ${isPass ? "PASS" : "FAIL"}</span>` +
+          `${s.title} — <a href="${s.url}" target="_blank" rel="noopener">${s.url}</a>`;
+        citationsEl.appendChild(div);
+      });
+    } else {
+      citationsEl.innerHTML = "<em>No citations returned.</em>";
+    }
+
+    latencyEl.textContent =
+      `Latency: ${data.latency_sec}s  |  Tokens: prompt=${data.prompt_tokens} ` +
+      `completion=${data.completion_tokens} total=${data.total_tokens}`;
+  } catch (err) {
+    status.textContent = "Request failed";
+    answerEl.style.display = "block";
+    answerEl.textContent = String(err);
+  }
+}
+
+document.getElementById("question").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") ask();
+});
+
+loadDomains();
+</script>
+</body>
+</html>
