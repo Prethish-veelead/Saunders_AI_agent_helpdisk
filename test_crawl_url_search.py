@@ -315,11 +315,12 @@ def test_crawl_url_answer_success_with_citation_based_sources():
          patch.object(crawl_url_search, "rank_candidates_by_embedding", return_value=[(95.0, pool[0]), (10.0, pool[1])]), \
          patch.object(crawl_url_search, "_fetch_page", side_effect=fake_fetch_page), \
          patch.object(helpdesk_answer, "generate_structured_response", return_value=structured), \
-         patch.object(helpdesk_answer, "_follow_up_answerable", return_value=True):
-        # _follow_up_answerable does its own live classify-model call —
-        # irrelevant to what THIS test checks (citation-based sourcing),
-        # so it's stubbed to always pass; see test_structured_response.py
-        # for its own dedicated tests.
+         patch.object(helpdesk_answer, "_follow_up_answerable", return_value=True), \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
+        # _follow_up_answerable/_content_supports_answer both do their own
+        # live classify-model call — irrelevant to what THIS test checks
+        # (citation-based sourcing), so both are stubbed to always pass;
+        # see test_structured_response.py for their own dedicated tests.
 
         result = run(crawl_url_search.crawl_url_answer("how do I fix my vpn", {}))
 
@@ -356,7 +357,8 @@ def test_crawl_url_answer_passes_conversation_history_through():
          patch.object(crawl_url_search, "build_candidate_pool", new=AsyncMock(return_value=pool)), \
          patch.object(crawl_url_search, "rank_candidates_by_embedding", return_value=[(95.0, pool[0])]), \
          patch.object(crawl_url_search, "_fetch_page", side_effect=fake_fetch_page), \
-         patch.object(helpdesk_answer, "generate_structured_response", return_value=structured) as mock_generate:
+         patch.object(helpdesk_answer, "generate_structured_response", return_value=structured) as mock_generate, \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
 
         run(crawl_url_search.crawl_url_answer("it still won't connect", {}, history))
 

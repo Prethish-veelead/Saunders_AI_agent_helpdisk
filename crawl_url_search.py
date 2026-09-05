@@ -427,7 +427,7 @@ async def crawl_url_answer(
     if structured.get("not_found"):
         return None
 
-    cited = resolve_cited_chunks(chunks, structured.get("answer_reference_numbers"))
+    cited = resolve_cited_chunks(chunks, structured.get("answer_reference_numbers"), structured.get("answer", ""))
     sources = (
         [{"title": c["title"], "url": c["url"], "source_type": "live_url"} for c in cited]
         or [{"title": chunks[0]["title"], "url": chunks[0]["url"], "source_type": "live_url"}]

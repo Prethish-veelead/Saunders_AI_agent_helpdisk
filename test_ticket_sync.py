@@ -139,7 +139,8 @@ def test_ticket_first_check_never_receives_conversation_history():
     history = [{"question": "what are lenovo gaming laptops?", "answer": "The Legion Pro 7 has an i9 and RTX 4080."}]
 
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
-         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate, \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         mock_search.return_value = [TICKET_CHUNK]
         mock_generate.return_value = {
             "not_found": False, "subject": "s", "description": "d", "answer": "irrelevant ticket answer",
@@ -161,7 +162,8 @@ def test_fallback_search_still_receives_conversation_history():
 
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
          patch.object(helpdesk_answer, "search_chunks_all_sources") as mock_fallback_search, \
-         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate, \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         mock_search.return_value = []
         mock_fallback_search.return_value = [FALLBACK_CHUNK]
         mock_generate.return_value = {
@@ -212,7 +214,8 @@ def test_ticket_first_check_requires_actionable_resolution():
     print("\"fixed on my end\") — that must not be shown as the final answer.")
 
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
-         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate, \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         mock_search.return_value = [TICKET_CHUNK]
         mock_generate.return_value = {
             "not_found": False, "subject": "s", "description": "d", "answer": "a",
@@ -233,7 +236,8 @@ def test_fallback_search_does_not_require_actionable_resolution():
 
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
          patch.object(helpdesk_answer, "search_chunks_all_sources") as mock_fallback_search, \
-         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate, \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         mock_search.return_value = []
         mock_fallback_search.return_value = [FALLBACK_CHUNK]
         mock_generate.return_value = {
@@ -272,7 +276,8 @@ def test_real_question_mentioning_helpdesk_is_not_treated_as_a_greeting():
 
     with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
          patch.object(helpdesk_answer, "search_chunks_all_sources", return_value=[FALLBACK_CHUNK]), \
-         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate, \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         mock_search.return_value = []
         mock_generate.return_value = {
             "not_found": False, "subject": "s", "description": "d", "answer": "a",

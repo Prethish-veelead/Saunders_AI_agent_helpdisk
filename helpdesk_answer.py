@@ -368,7 +368,7 @@ def _build_sources(chunks: list[dict]) -> list[dict]:
     ]
 
 
-def resolve_cited_chunks(chunks: list[dict], reference_numbers: object) -> list[dict]:
+def resolve_cited_chunks(chunks: list[dict], reference_numbers: object, answer_text: str = "") -> list[dict]:
     """Maps the model's 1-based answer_reference_numbers back to the exact
     chunks used to build the numbered context block (reference N is
     chunks[N-1] — matches _build_context_block's own numbering), deduped
@@ -376,41 +376,43 @@ def resolve_cited_chunks(chunks: list[dict], reference_numbers: object) -> list[
     numbers are silently dropped — the model occasionally miscounts, and a
     partial valid set is still more trustworthy than falling back to a
     pure score-based guess for everything.
+
+    When answer_text is given, each candidate is also verified (via
+    _content_supports_answer) to have actually contributed real content —
+    confirmed live that the model sometimes over-cites a second,
+    topically-related-but-unhelpful reference (e.g. a thin ticket)
+    alongside the real source, showing both to the user as if each
+    contributed to the answer. Capped at MAX_RESPONSE_SOURCES verified
+    hits since that's all that's ever shown regardless.
     """
     if not isinstance(reference_numbers, list):
         return []
     seen_keys: set = set()
     resolved: list[dict] = []
     for ref in reference_numbers:
+        if len(resolved) >= MAX_RESPONSE_SOURCES:
+            break
         if not isinstance(ref, int) or not (1 <= ref <= len(chunks)):
             continue
         chunk = chunks[ref - 1]
         key = chunk.get("page_id") or chunk.get("url") or chunk.get("title")
         if key in seen_keys:
             continue
+        if answer_text and not _content_supports_answer(answer_text, chunk):
+            continue
         seen_keys.add(key)
         resolved.append(chunk)
     return resolved
 
 
-def _follow_up_answerable(question_text: str, chunk: dict) -> bool:
-    """Confirms the chunk the model cited for this follow-up actually
-    answers it — the model's own reference_number claim is otherwise
-    trusted blindly, and occasionally wrong (a plausible-sounding
-    follow-up whose cited reference doesn't really cover it), which
-    surfaces a question that leads the user to a dead end when they ask
-    it next.
-
-    Deliberately NOT a second full generate_structured_response() call
-    (that would re-run an entire search+gpt-4o answer per follow-up, up
-    to 3x the cost of the original question). Instead: one minimal
-    yes/no classification on the cheap AZURE_OPENAI_CLASSIFY_DEPLOYMENT
-    model (gpt-4o-mini), reusing content already fetched for the current
-    answer — no extra search/embedding call either.
+def _classify_yes_no(user_prompt: str) -> bool:
+    """Shared cheap yes/no classification call on AZURE_OPENAI_CLASSIFY_DEPLOYMENT
+    (e.g. gpt-4o-mini, or a reasoning model like gpt-5-mini — see the
+    REASONING_EFFORT/MAX_TOKENS constants above for what that requires).
+    Deliberately NOT a second full generate_structured_response() call —
+    that would re-run an entire search+gpt-4o answer per check. Returns
+    False (fail closed) on any error or empty/unclear reply.
     """
-    content = (chunk.get("content") or "")[:1500]
-    if not content.strip():
-        return False
     url = (
         f"{AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/"
         f"{AZURE_OPENAI_CLASSIFY_DEPLOYMENT}/chat/completions"
@@ -420,25 +422,62 @@ def _follow_up_answerable(question_text: str, chunk: dict) -> bool:
     payload = {
         "messages": [
             {"role": "system", "content": "Answer with exactly one word: yes or no."},
-            {
-                "role": "user",
-                "content": (
-                    f"Content:\n{content}\n\nQuestion: {question_text}\n\n"
-                    "Does the content above directly and completely answer this question?"
-                ),
-            },
+            {"role": "user", "content": user_prompt},
         ],
         "max_completion_tokens": AZURE_OPENAI_CLASSIFY_MAX_TOKENS,
     }
     if AZURE_OPENAI_CLASSIFY_REASONING_EFFORT:
         payload["reasoning_effort"] = AZURE_OPENAI_CLASSIFY_REASONING_EFFORT
+    resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+    resp.raise_for_status()
+    reply = resp.json()["choices"][0]["message"]["content"].strip().lower()
+    return reply.startswith("yes")
+
+
+def _follow_up_answerable(question_text: str, chunk: dict) -> bool:
+    """Confirms the chunk the model cited for this follow-up actually
+    answers it — the model's own reference_number claim is otherwise
+    trusted blindly, and occasionally wrong (a plausible-sounding
+    follow-up whose cited reference doesn't really cover it), which
+    surfaces a question that leads the user to a dead end when they ask
+    it next. Reuses content already fetched for the current answer — no
+    extra search/embedding call either.
+    """
+    content = (chunk.get("content") or "")[:1500]
+    if not content.strip():
+        return False
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-        reply = resp.json()["choices"][0]["message"]["content"].strip().lower()
-        return reply.startswith("yes")
+        return _classify_yes_no(
+            f"Content:\n{content}\n\nQuestion: {question_text}\n\n"
+            "Does the content above directly and completely answer this question?"
+        )
     except Exception:  # noqa: BLE001 — a failed check should drop the follow-up, not break the real answer
         logger.warning("Follow-up answerability check failed for %r; dropping it.", question_text[:80])
+        return False
+
+
+def _content_supports_answer(answer_text: str, chunk: dict) -> bool:
+    """Confirms a chunk the model listed in answer_reference_numbers
+    actually contributed real content to the answer — the model
+    sometimes over-cites: alongside the real source it drew the answer
+    from, it also lists a second, merely topically-related reference
+    (e.g. a thin ticket with no real resolution) that contributed
+    nothing, and both then get shown to the user as "sources" even
+    though only one is real. Confirmed live: a lockout question answered
+    entirely from a library doc's real troubleshooting steps also listed
+    the matching (but content-free) ticket as a source.
+    """
+    content = (chunk.get("content") or "")[:1500]
+    if not content.strip():
+        return False
+    try:
+        return _classify_yes_no(
+            f"Content:\n{content}\n\nAnswer given to the user: {answer_text}\n\n"
+            "Does the content above actually contain the specific information "
+            "this answer is based on (not just the same general topic)?"
+        )
+    except Exception:  # noqa: BLE001 — a failed check should drop the citation, not break the real answer
+        logger.warning("Citation-support check failed for a reference; dropping it.")
         return False
 
 
@@ -519,7 +558,8 @@ def _generate_and_format(
     if structured.get("not_found"):
         return {"status": "not_found"}
 
-    cited_sources = resolve_cited_chunks(chunks, structured.get("answer_reference_numbers"))
+    answer_text = structured.get("answer", "")
+    cited_sources = resolve_cited_chunks(chunks, structured.get("answer_reference_numbers"), answer_text)
     if cited_sources:
         top_sources = cited_sources[:MAX_RESPONSE_SOURCES]
     else:

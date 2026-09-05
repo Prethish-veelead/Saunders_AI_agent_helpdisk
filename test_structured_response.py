@@ -176,7 +176,11 @@ def test_cited_chunk_wins_over_higher_scoring_uncited_chunk():
         "follow_up_questions": [],
     }
 
-    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured):
+    # _content_supports_answer does its own live classify-model call —
+    # irrelevant to what THIS test checks (citation-based sourcing over
+    # raw score), so it's stubbed to always pass.
+    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured), \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         result = helpdesk_answer._generate_and_format("how to fix vpn", chunks)
 
     check("source is library_doc, not the higher-scoring ticket",
@@ -229,11 +233,13 @@ def test_follow_up_without_valid_reference_is_dropped():
         ],
     }
 
-    # _follow_up_answerable does its own live classify-model call — irrelevant
-    # to what THIS test checks (structural validation), so it's stubbed to
-    # always pass here; its actual behavior has its own dedicated test below.
+    # _follow_up_answerable/_content_supports_answer both do their own live
+    # classify-model call — irrelevant to what THIS test checks (structural
+    # validation), so both are stubbed to always pass here; their actual
+    # behavior has its own dedicated tests below.
     with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured), \
-         patch.object(helpdesk_answer, "_follow_up_answerable", return_value=True):
+         patch.object(helpdesk_answer, "_follow_up_answerable", return_value=True), \
+         patch.object(helpdesk_answer, "_content_supports_answer", return_value=True):
         result = helpdesk_answer._generate_and_format("how do I connect to vpn", chunks)
 
     follow_ups = result.get("follow_up_questions", [])
@@ -313,6 +319,71 @@ def test_follow_up_answerable_fails_closed_on_empty_content_or_error():
     check("a failed classify call drops the follow-up rather than raising", result is False)
 
 
+def test_resolve_cited_chunks_drops_a_reference_that_contributed_nothing():
+    print("\n--- resolve_cited_chunks drops an over-cited reference that didn't actually contribute ---")
+    print("Real bug this fixes: a lockout question was answered entirely from a library doc's real")
+    print("troubleshooting steps, but the model also listed the matching (content-free) ticket as a")
+    print("reference, so both a real and a fake source were shown to the user as if each contributed.")
+
+    chunks = [
+        {"chunk_id": "t1", "page_id": "ticket-1", "title": "Locked out", "source_type": "ticket",
+         "content": "Locked out after too many failed login attempts."},
+        {"chunk_id": "l1", "page_id": "lib-1", "title": "KB Scenarios", "source_type": "library_doc",
+         "content": "Wait 15 minutes, then use Self-Service Password Reset at aka.ms/sspr."},
+    ]
+    answer_text = "Wait 15 minutes, then use Self-Service Password Reset at aka.ms/sspr."
+
+    def fake_supports(given_answer, chunk):
+        return chunk["chunk_id"] == "l1"
+
+    with patch.object(helpdesk_answer, "_content_supports_answer", side_effect=fake_supports):
+        resolved = helpdesk_answer.resolve_cited_chunks(chunks, [1, 2], answer_text)
+
+    check("only the chunk that actually supports the answer survives",
+          [c["chunk_id"] for c in resolved] == ["l1"], f"got {resolved}")
+
+
+def test_resolve_cited_chunks_skips_the_support_check_when_no_answer_text_given():
+    print("\n--- resolve_cited_chunks stays purely structural when answer_text isn't passed (back-compat) ---")
+
+    chunks = [{"chunk_id": "t1", "page_id": "ticket-1", "title": "Locked out", "source_type": "ticket"}]
+    with patch.object(helpdesk_answer, "_content_supports_answer") as mock_supports:
+        resolved = helpdesk_answer.resolve_cited_chunks(chunks, [1])
+
+    check("the reference is kept without ever calling the support check", len(resolved) == 1, f"got {resolved}")
+    check("_content_supports_answer was never called", mock_supports.call_count == 0)
+
+
+def test_content_supports_answer_calls_classify_model_and_parses_yes_no():
+    print("\n--- _content_supports_answer classifies via the cheap model and parses its yes/no reply ---")
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                prompt = json.get("messages", [{}, {}])[-1].get("content", "")
+                answer_part = prompt.split("Answer given to the user:", 1)[-1]
+                reply = "yes" if "sspr" in answer_part.lower() else "no"
+                return {"choices": [{"message": {"content": reply}}]}
+        return FakeResp()
+
+    with patch.object(helpdesk_answer, "requests") as mock_requests:
+        mock_requests.post.side_effect = fake_post
+        supported = helpdesk_answer._content_supports_answer(
+            "Use SSPR at aka.ms/sspr.", {"content": "Some ticket text with no real resolution."}
+        )
+        not_supported = helpdesk_answer._content_supports_answer(
+            "Contact IT support directly.", {"content": "Some ticket text with no real resolution."}
+        )
+
+    check("an answer whose claim is echoed back is confirmed supported", supported is True)
+    check("an answer whose claim isn't echoed back is rejected", not_supported is False)
+    check("empty chunk content is rejected without even calling the model",
+          helpdesk_answer._content_supports_answer("Any answer.", {"content": ""}) is False)
+
+
 if __name__ == "__main__":
     test_dedupe_and_top_three()
     test_category_matches_top_ranked_source()
@@ -323,6 +394,9 @@ if __name__ == "__main__":
     test_follow_up_answerable_calls_classify_model_and_parses_yes_no()
     test_follow_up_answerable_fails_closed_on_empty_content_or_error()
     test_follow_up_without_valid_reference_is_dropped()
+    test_resolve_cited_chunks_drops_a_reference_that_contributed_nothing()
+    test_resolve_cited_chunks_skips_the_support_check_when_no_answer_text_given()
+    test_content_supports_answer_calls_classify_model_and_parses_yes_no()
 
     print("\n" + "=" * 60)
     if FAILURES:
