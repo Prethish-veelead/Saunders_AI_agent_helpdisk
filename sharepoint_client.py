@@ -52,6 +52,13 @@ LIST_FIELD_URL = os.environ.get("LIST_FIELD_URL", "SeedURL")
 # search (live_url_search.py). Falls back to the URL itself as its own
 # title if this column doesn't exist on the List; never fails because of it.
 LIST_FIELD_TITLE = os.environ.get("LIST_FIELD_TITLE", "Title")
+# Optional Yes/No column letting someone toggle a tracked URL off without
+# deleting the row. Confirmed live that a real site has this column
+# ("Enable") that older environments' Lists never had — so a row is only
+# excluded when this field is actually PRESENT and explicitly not True; a
+# List without this column at all (the common case so far) keeps every
+# row, exactly as before this column existed.
+LIST_FIELD_URL_ENABLED = os.environ.get("LIST_FIELD_URL_ENABLED", "Enable")
 
 SHAREPOINT_LIBRARY_LIST_ID = os.environ.get("SHAREPOINT_LIBRARY_LIST_ID", "")
 
@@ -272,6 +279,8 @@ def get_url_candidates() -> list[dict]:
         url = (fields.get(LIST_FIELD_URL) or "").strip()
         if not url:
             continue
+        if LIST_FIELD_URL_ENABLED in fields and fields.get(LIST_FIELD_URL_ENABLED) is not True:
+            continue
         title = (fields.get(LIST_FIELD_TITLE) or "").strip() or url
         candidates.append({"url": url, "title": title})
     return candidates
@@ -396,17 +405,38 @@ def _get_subcategory_names() -> dict[str, str]:
     return _subcategory_names_cache
 
 
+def _resolve_category_field(fields: dict, field_name: str, lookup_names: dict[str, str]) -> str:
+    """KBCategory/KBSubCategory were assumed to always be Lookup columns
+    (Graph exposes those as "<name>LookupId", a reference resolved against
+    HD_Categories/HD_SubCategories) — confirmed live this doesn't hold for
+    every SharePoint site: the client's real library has the same field
+    *names* this code already expected, and SharePoint's own UI clearly
+    showed real values, but the index kept coming back empty, because that
+    library's Category/Sub-Category columns turned out to be plain
+    Choice/Text columns instead, with no "LookupId" companion field at
+    all. Tries the Lookup-style resolution first, and if that field simply
+    isn't present, falls back to reading the column directly as a plain
+    value — instead of assuming one fixed schema and silently returning
+    nothing when a site happens to be built the other way.
+    """
+    lookup_id = fields.get(f"{field_name}LookupId")
+    if lookup_id:
+        return lookup_names.get(str(lookup_id), "")
+    direct_value = fields.get(field_name)
+    return str(direct_value).strip() if direct_value else ""
+
+
 def _get_library_item_metadata(drive_id: str, item_id: str, filename: str) -> tuple[str, str, str]:
     """KBCategory/KBSubCategory/ArticleStatus on the library are custom
     columns, only available through the item's associated list entry — not
     the plain drive-item metadata /drives/.../items/{id} already returns.
-    KBCategory/KBSubCategory are Lookup columns specifically: Graph exposes
-    them as "<name>LookupId" (a reference, not the text itself), resolved
-    here against the HD_Categories/HD_SubCategories reference lists.
-    ArticleStatus is a plain text/choice column, returned as-is. Uses
-    /drives/{id}/items/... rather than /sites/{id}/drive/... (the site's
-    *default* drive) since this library isn't the site default drive and
-    the latter 404s.
+    KBCategory/KBSubCategory are resolved via _resolve_category_field()
+    (see its docstring — handles both Lookup-column and plain Choice/Text
+    schemas, since real sites have been confirmed to differ on this).
+    ArticleStatus is always read directly (it's a plain text/choice
+    column). Uses /drives/{id}/items/... rather than /sites/{id}/drive/...
+    (the site's *default* drive) since this library isn't the site default
+    drive and the latter 404s.
 
     Returns (category, sub_category, status) — status is "" if it couldn't
     be determined (missing field, or the fetch itself failed), which
@@ -414,16 +444,18 @@ def _get_library_item_metadata(drive_id: str, item_id: str, filename: str) -> tu
     fails closed rather than silently indexing something it shouldn't.
     """
     try:
+        # Plain $expand=fields only — "$expand=fields(select=...)" (with or
+        # without a wildcard) is rejected outright by Graph with a 400 ("not
+        # valid in a $select or $expand expression") for this specific
+        # /drives/.../listItem endpoint, confirmed live.
         list_item = _graph_get(f"/drives/{drive_id}/items/{item_id}/listItem", params={"$expand": "fields"})
     except GraphAPIError as exc:
         logger.warning("Could not fetch metadata for '%s': %s", filename, exc)
         return "", "", ""
 
     fields = list_item.get("fields", {})
-    category_lookup_id = str(fields.get(f"{LIST_FIELD_CATEGORY}LookupId") or "")
-    subcategory_lookup_id = str(fields.get(f"{LIST_FIELD_SUBCATEGORY}LookupId") or "")
-    category = _get_category_names().get(category_lookup_id, "") if category_lookup_id else ""
-    sub_category = _get_subcategory_names().get(subcategory_lookup_id, "") if subcategory_lookup_id else ""
+    category = _resolve_category_field(fields, LIST_FIELD_CATEGORY, _get_category_names())
+    sub_category = _resolve_category_field(fields, LIST_FIELD_SUBCATEGORY, _get_subcategory_names())
     status = fields.get(LIST_FIELD_LIBRARY_STATUS, "")
     return category, sub_category, status
 

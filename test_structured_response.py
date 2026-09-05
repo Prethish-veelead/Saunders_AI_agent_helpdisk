@@ -213,7 +213,8 @@ def test_follow_up_without_valid_reference_is_dropped():
 
     chunks = [
         {"chunk_id": "c1", "page_id": "p1", "title": "VPN Guide", "url": "https://example.com/vpn",
-         "source_type": "library_doc", "category": "IT", "sub_category": "VPN", "@search.score": 5.0},
+         "source_type": "library_doc", "category": "IT", "sub_category": "VPN", "@search.score": 5.0,
+         "content": "To connect: open GlobalProtect and enter vpn.example.com as the portal address."},
     ]
     structured = {
         "not_found": False, "subject": "s", "description": "d", "answer": "Use GlobalProtect.",
@@ -228,7 +229,11 @@ def test_follow_up_without_valid_reference_is_dropped():
         ],
     }
 
-    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured):
+    # _follow_up_answerable does its own live classify-model call — irrelevant
+    # to what THIS test checks (structural validation), so it's stubbed to
+    # always pass here; its actual behavior has its own dedicated test below.
+    with patch.object(helpdesk_answer, "generate_structured_response", return_value=structured), \
+         patch.object(helpdesk_answer, "_follow_up_answerable", return_value=True):
         result = helpdesk_answer._generate_and_format("how do I connect to vpn", chunks)
 
     follow_ups = result.get("follow_up_questions", [])
@@ -241,12 +246,82 @@ def test_follow_up_without_valid_reference_is_dropped():
           f"got {follow_ups}")
 
 
+def test_follow_up_dropped_when_cited_content_does_not_actually_answer_it():
+    print("\n--- A structurally-valid follow-up is still dropped if its cited content doesn't answer it ---")
+
+    chunks = [
+        {"chunk_id": "c1", "page_id": "p1", "title": "VPN Guide", "content": "Open GlobalProtect to connect."},
+        {"chunk_id": "c2", "page_id": "p2", "title": "Printer Guide", "content": "Load paper into tray 2."},
+    ]
+    raw_follow_ups = [
+        {"question": "What is the portal address?", "reference_number": 1},  # content doesn't cover this
+        {"question": "How do I load paper?", "reference_number": 2},  # content does cover this
+    ]
+
+    def fake_answerable(question_text, chunk):
+        return chunk["chunk_id"] == "c2"
+
+    with patch.object(helpdesk_answer, "_follow_up_answerable", side_effect=fake_answerable):
+        result = helpdesk_answer.resolve_valid_follow_ups(chunks, raw_follow_ups)
+
+    check("only the confirmed-answerable follow-up survives", result == ["How do I load paper?"], f"got {result}")
+
+
+def test_follow_up_answerable_calls_classify_model_and_parses_yes_no():
+    print("\n--- _follow_up_answerable classifies via the cheap model and parses its yes/no reply ---")
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                prompt = json.get("messages", [{}, {}])[-1].get("content", "")
+                # Only the "Question: ..." line decides yes/no — the fake
+                # content ("Load paper into tray 2.") always mentions
+                # "paper" too, so scanning the whole prompt would trivially
+                # say yes regardless of what's actually being asked.
+                question_line = prompt.split("Question:", 1)[-1]
+                reply = "yes" if "paper" in question_line.lower() else "no"
+                return {"choices": [{"message": {"content": reply}}]}
+        return FakeResp()
+
+    with patch.object(helpdesk_answer, "requests") as mock_requests:
+        mock_requests.post.side_effect = fake_post
+        answerable = helpdesk_answer._follow_up_answerable(
+            "How do I load paper?", {"content": "Load paper into tray 2."}
+        )
+        not_answerable = helpdesk_answer._follow_up_answerable(
+            "What is the portal address?", {"content": "Load paper into tray 2."}
+        )
+
+    check("content that covers the question is confirmed answerable", answerable is True)
+    check("content that doesn't cover the question is rejected", not_answerable is False)
+
+
+def test_follow_up_answerable_fails_closed_on_empty_content_or_error():
+    print("\n--- _follow_up_answerable fails closed: no content, or a request error, both drop the follow-up ---")
+
+    check("empty chunk content is rejected without even calling the model",
+          helpdesk_answer._follow_up_answerable("Any question?", {"content": ""}) is False)
+    check("missing content key is rejected the same way",
+          helpdesk_answer._follow_up_answerable("Any question?", {}) is False)
+
+    with patch.object(helpdesk_answer, "requests") as mock_requests:
+        mock_requests.post.side_effect = Exception("network error")
+        result = helpdesk_answer._follow_up_answerable("Any question?", {"content": "Some real content."})
+    check("a failed classify call drops the follow-up rather than raising", result is False)
+
+
 if __name__ == "__main__":
     test_dedupe_and_top_three()
     test_category_matches_top_ranked_source()
     test_not_found_short_circuits_cleanly()
     test_cited_chunk_wins_over_higher_scoring_uncited_chunk()
     test_invalid_reference_numbers_fall_back_to_score_ranking()
+    test_follow_up_dropped_when_cited_content_does_not_actually_answer_it()
+    test_follow_up_answerable_calls_classify_model_and_parses_yes_no()
+    test_follow_up_answerable_fails_closed_on_empty_content_or_error()
     test_follow_up_without_valid_reference_is_dropped()
 
     print("\n" + "=" * 60)

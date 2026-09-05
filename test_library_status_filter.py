@@ -119,10 +119,43 @@ def test_category_and_subcategory_still_resolve_for_published_docs():
     check("sub_category resolved correctly", docs[0].sub_category == "Network", f"got {docs[0].sub_category if docs else None}")
 
 
+def test_category_and_subcategory_resolve_when_columns_are_plain_choice_fields():
+    print("\n--- Category/sub-category also resolve when the columns are plain Choice/Text, not Lookup ---")
+    print("Real bug this fixes: the client's real library uses the exact field names this code already")
+    print("expected (KBCategory/KBSubCategory), and SharePoint's own UI showed real values, but the index")
+    print("kept coming back empty — because that library's columns aren't Lookup columns at all, so there")
+    print("was never a KBCategoryLookupId field for the old code to find.")
+
+    def fake_graph_get_plain_choice(path, params=None, **kwargs):
+        if path == f"/drives/{DRIVE_ID}/root/children":
+            return {"value": [{"id": "item-published", "name": "Doc.docx", "lastModifiedDateTime": "", "webUrl": ""}]}
+        if path == f"/drives/{DRIVE_ID}/items/item-published/listItem":
+            # No "KBCategoryLookupId"/"KBSubCategoryLookupId" at all here —
+            # just the plain field values, as a real Choice/Text column
+            # would actually come back from Graph.
+            return {"fields": {"ArticleStatus": "Published", "KBCategory": "IT", "KBSubCategory": "Account Lockout"}}
+        raise AssertionError(f"Unexpected _graph_get call: {path}")
+
+    with patch.object(sharepoint_client, "SHAREPOINT_LIBRARY_LIST_ID", "lib-list-id"), \
+         patch.object(sharepoint_client, "_get_library_drive_id", return_value=DRIVE_ID), \
+         patch.object(sharepoint_client, "_graph_get", side_effect=fake_graph_get_plain_choice), \
+         patch.object(sharepoint_client, "_graph_get_bytes", return_value=b"fake"), \
+         patch.object(sharepoint_client, "_extract_text", return_value="text"):
+        docs = sharepoint_client.get_library_documents()
+
+    check("one Published document returned", len(docs) == 1, f"got {docs}")
+    check("category resolved directly from the plain field value", docs[0].category == "IT" if docs else False,
+          f"got {docs[0].category if docs else None}")
+    check("sub_category resolved directly from the plain field value",
+          docs[0].sub_category == "Account Lockout" if docs else False,
+          f"got {docs[0].sub_category if docs else None}")
+
+
 if __name__ == "__main__":
     test_only_published_documents_are_included()
     test_missing_status_field_fails_closed()
     test_category_and_subcategory_still_resolve_for_published_docs()
+    test_category_and_subcategory_resolve_when_columns_are_plain_choice_fields()
 
     print("\n" + "=" * 60)
     if FAILURES:

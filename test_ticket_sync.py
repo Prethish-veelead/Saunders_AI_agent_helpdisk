@@ -249,6 +249,42 @@ def test_fallback_search_does_not_require_actionable_resolution():
           require_flag is False, f"got {require_flag}")
 
 
+def test_pure_greetings_get_the_welcome_response_without_any_search():
+    print("\n--- A bare greeting gets the welcome message directly, no search at all ---")
+
+    greetings = ["helpdesk", "hi helpdesk", "Hi Helpdesk!", "hello", "hey there", "HI!!"]
+    for greeting in greetings:
+        with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
+             patch.object(helpdesk_answer, "search_chunks_all_sources") as mock_fallback, \
+             patch.object(crawl_url_search, "crawl_url_answer") as mock_live:
+            result = helpdesk_answer.answer_question(greeting)
+
+        check(f"{greeting!r} -> answered with the welcome text",
+              result.get("status") == "answered" and result.get("answer") == helpdesk_answer.GREETING_RESPONSE_TEXT,
+              f"got {result}")
+        check(f"{greeting!r} -> ticket search was never called", mock_search.call_count == 0)
+        check(f"{greeting!r} -> live URL search was never called", mock_live.call_count == 0)
+        check(f"{greeting!r} -> fallback search was never called", mock_fallback.call_count == 0)
+
+
+def test_real_question_mentioning_helpdesk_is_not_treated_as_a_greeting():
+    print("\n--- A real question that happens to say 'helpdesk' still goes through normal search ---")
+
+    with patch.object(helpdesk_answer, "search_chunks") as mock_search, \
+         patch.object(helpdesk_answer, "search_chunks_all_sources", return_value=[FALLBACK_CHUNK]), \
+         patch.object(helpdesk_answer, "generate_structured_response") as mock_generate:
+        mock_search.return_value = []
+        mock_generate.return_value = {
+            "not_found": False, "subject": "s", "description": "d", "answer": "a",
+            "answer_reference_numbers": [1], "category": "IT", "sub_category": "General", "follow_up_questions": [],
+        }
+        result = helpdesk_answer.answer_question("how do I contact the helpdesk?")
+
+    check("a real question mentioning 'helpdesk' is NOT short-circuited to the greeting",
+          result.get("answer") != helpdesk_answer.GREETING_RESPONSE_TEXT, f"got {result}")
+    check("ticket search was actually called for the real question", mock_search.call_count == 1)
+
+
 def test_falls_back_when_no_ticket_chunks():
     print("\n--- No ticket chunks found -> falls back to per-source-type merged search ---")
 
@@ -405,6 +441,8 @@ if __name__ == "__main__":
     test_fallback_search_still_receives_conversation_history()
     test_ticket_first_check_requires_actionable_resolution()
     test_fallback_search_does_not_require_actionable_resolution()
+    test_pure_greetings_get_the_welcome_response_without_any_search()
+    test_real_question_mentioning_helpdesk_is_not_treated_as_a_greeting()
     test_falls_back_when_no_ticket_chunks()
     test_falls_back_when_ticket_answer_is_not_found()
     test_search_chunks_all_sources_merges_every_source_type_independently()

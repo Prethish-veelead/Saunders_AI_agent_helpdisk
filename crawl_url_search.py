@@ -30,6 +30,7 @@ index fallback (see helpdesk_answer.answer_question()).
 
 import asyncio
 import logging
+import math
 import os
 import re
 from typing import Optional
@@ -50,6 +51,12 @@ REQUEST_TIMEOUT_SECONDS = int(os.environ.get("CRAWL_REQUEST_TIMEOUT_SECONDS", "1
 MAX_SUBLINKS_PER_SEED = int(os.environ.get("CRAWL_MAX_SUBLINKS_PER_SEED", "30"))
 MAX_CONTENT_CHARS = int(os.environ.get("CRAWL_MAX_CONTENT_CHARS", "6000"))
 MAX_PAGES_FOR_ANSWER = int(os.environ.get("CRAWL_MAX_PAGES_FOR_ANSWER", "2"))
+# On the cosine-similarity-times-100 scale used below (roughly comparable
+# in shape to the old fuzzy-match 0-100 scores, though not the same
+# semantics). Tuned against real tracked seeds — see
+# filter_relevant_seeds()'s docstring for why this specific value and why
+# it fails open rather than risk excluding something genuinely relevant.
+SEED_RELEVANCE_THRESHOLD = float(os.environ.get("CRAWL_SEED_RELEVANCE_THRESHOLD", "35"))
 # A self-identifying bot UA gets hard-blocked (403) by some tracked sites'
 # bot protection (confirmed live against Lenovo's Akamai-fronted site) even
 # though the same request succeeds instantly with a normal browser UA and
@@ -234,9 +241,11 @@ def _normalize_for_matching(text: str) -> str:
 
 
 def rank_candidates(question: str, candidates: list[dict], top_n: int = MAX_PAGES_FOR_ANSWER) -> list[tuple[float, dict]]:
-    """Scores each candidate's title against the question — the single
-    most important signal in this pipeline, since it's what decides which
-    page(s) actually get fetched and answered from.
+    """Scores each candidate's title against the question by literal text
+    overlap (RapidFuzz) — kept as-is (and still covered by its own tests)
+    as a fallback/utility, but no longer what crawl_url_answer() actually
+    uses for ranking; see rank_candidates_by_embedding()'s docstring for
+    why pure text matching isn't reliable enough for this on its own.
     """
     normalized_question = _normalize_for_matching(question)
     scored = [
@@ -245,6 +254,103 @@ def rank_candidates(question: str, candidates: list[dict], top_n: int = MAX_PAGE
     ]
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return scored[:top_n]
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def rank_candidates_by_embedding(
+    question: str, candidates: list[dict], top_n: int = MAX_PAGES_FOR_ANSWER
+) -> list[tuple[float, dict]]:
+    """Scores each candidate's title against the question by MEANING
+    (embeddings + cosine similarity), not literal text overlap. This is
+    what actually decides which page(s) get fetched and answered from —
+    replaces the plain rank_candidates() above.
+
+    Confirmed live why pure text matching isn't enough on its own: asking
+    "What are the major implementations of Python?" ranked a generic
+    Wikipedia article literally titled "Programming language
+    implementation" at a perfect fuzzy-match score, ahead of the actual
+    Python article (which does cover CPython/PyPy/MicroPython) — the word
+    "implementation" matched exactly, but the page had nothing to do with
+    Python. Embeddings compare meaning, not characters, so a page about
+    implementation-in-general vs. a question specifically about Python's
+    implementations should no longer be confused this way.
+
+    Deliberately does not catch embedding failures itself and fall back to
+    the fuzzy matching above — that would silently reintroduce the exact
+    unreliable behavior this function exists to replace. crawl_url_answer's
+    own caller (answer_question) already wraps the whole live-URL attempt
+    in a try/except, so a real embedding failure here correctly falls
+    through to the next answer source instead, same as any other failure
+    in this module.
+    """
+    if not candidates:
+        return []
+    from embedding_client import get_embedding, get_embeddings_batch
+
+    question_embedding = get_embedding(question)
+    title_embeddings = get_embeddings_batch([c["title"] for c in candidates])
+    scored = [
+        (_cosine_similarity(question_embedding, emb) * 100, c)
+        for emb, c in zip(title_embeddings, candidates)
+    ]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return scored[:top_n]
+
+
+def filter_relevant_seeds(question: str, tracked: list[dict]) -> list[dict]:
+    """Decides which tracked seeds are even worth crawling for this
+    question, using the same embeddings-by-meaning approach as
+    rank_candidates_by_embedding() — applied here to each seed's own
+    tracked title (from SharePoint, already known with no extra fetch),
+    before any crawling happens at all.
+
+    This is the fix for the OTHER real failure mode found live: a plain
+    "Lenovo" title scores low against fuzzy text matching for a generic
+    "tell me about laptops" question (no shared words), so it lost to a
+    different tracked site whose sub-pages happen to have "Laptops"
+    baked into their titles — even though Lenovo obviously sells laptops.
+    Embeddings recognize that relationship even with zero literal word
+    overlap.
+
+    Also the mechanism this project needs before the client's tracked list
+    grows to 30-100 URLs — crawling every tracked site's sub-links for
+    every single question doesn't scale, so this narrows down to a few
+    relevant sites BEFORE any crawling happens, rather than crawling
+    everything and ranking after the fact.
+
+    Fails open on purpose: if nothing clears the relevance threshold, or
+    embedding the seeds fails for any reason, every tracked seed is kept
+    — matching this whole module's fail-soft design. An overly strict
+    filter must never make live search answer LESS than crawling
+    everything would have.
+    """
+    if not tracked:
+        return tracked
+    from embedding_client import get_embedding, get_embeddings_batch
+
+    try:
+        question_embedding = get_embedding(question)
+        titles = [t.get("title") or t.get("url", "") for t in tracked]
+        title_embeddings = get_embeddings_batch(titles)
+    except Exception:  # noqa: BLE001 — a failed relevance check must not block live search entirely
+        logger.warning("Seed relevance check failed — falling back to crawling every tracked seed.", exc_info=True)
+        return tracked
+
+    scored = [(_cosine_similarity(question_embedding, emb) * 100, t) for emb, t in zip(title_embeddings, tracked)]
+    relevant = [t for score, t in scored if score >= SEED_RELEVANCE_THRESHOLD]
+    logger.info(
+        "crawl_url_answer: STAGE filter_relevant_seeds -> %s",
+        [(round(score, 1), t.get("url")) for score, t in scored],
+    )
+    return relevant or tracked
 
 
 async def crawl_url_answer(
@@ -267,7 +373,9 @@ async def crawl_url_answer(
     # helpdesk_answer.py (same reasoning as live_url_search.py), and avoids
     # paying helpdesk_answer's own import weight on requests that never
     # reach this branch.
-    from helpdesk_answer import generate_structured_response, resolve_cited_chunks, resolve_valid_follow_ups
+    from helpdesk_answer import (
+        generate_structured_response, resolve_cited_chunks, resolve_valid_follow_ups, normalize_bullet_formatting,
+    )
 
     logger.info("crawl_url_answer: STARTING for question: %s", question[:100])
 
@@ -276,10 +384,13 @@ async def crawl_url_answer(
     except (SharePointConfigError, GraphAPIError) as exc:
         logger.warning("Failed to fetch tracked URLs for crawl-based search: %s", exc)
         return None
-    seed_urls = [c["url"] for c in tracked if c.get("url")]
-    logger.info("crawl_url_answer: STAGE get_url_candidates -> %d seed(s)", len(seed_urls))
-    if not seed_urls:
+    tracked = [c for c in tracked if c.get("url")]
+    logger.info("crawl_url_answer: STAGE get_url_candidates -> %d seed(s)", len(tracked))
+    if not tracked:
         return None
+
+    relevant_tracked = filter_relevant_seeds(question, tracked)
+    seed_urls = [c["url"] for c in relevant_tracked]
 
     pool = await build_candidate_pool(seed_urls)
     logger.info(
@@ -289,7 +400,7 @@ async def crawl_url_answer(
     if not pool:
         return None
 
-    ranked = rank_candidates(question, pool)
+    ranked = rank_candidates_by_embedding(question, pool)
     logger.info(
         "crawl_url_answer: STAGE rank_candidates -> %s",
         [(round(score, 1), c["url"]) for score, c in ranked],
@@ -326,7 +437,7 @@ async def crawl_url_answer(
         "subject": structured.get("subject", ""),
         "description": structured.get("description", ""),
         "status": "answered",
-        "answer": structured.get("answer", ""),
+        "answer": normalize_bullet_formatting(structured.get("answer", "")),
         "category": structured.get("category", ""),
         "subcategory": structured.get("sub_category", ""),
         "source": "live_url",

@@ -32,6 +32,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Optional
 
 import requests
@@ -48,9 +49,35 @@ AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY", "")
 AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
 AZURE_OPENAI_ANSWER_DEPLOYMENT = os.environ.get("AZURE_OPENAI_ANSWER_DEPLOYMENT", "gpt-4o")
-# Cheap model used for the live-URL-search "which candidate(s) answer this"
-# selection call (live_url_search.select_best_urls).
+AZURE_OPENAI_ANSWER_MAX_TOKENS = int(os.environ.get("AZURE_OPENAI_ANSWER_MAX_TOKENS", "2000"))
+# Empty string (the default env value) omits "temperature" from the
+# payload entirely — required for reasoning-family models (e.g. gpt-5-mini)
+# which reject any explicit temperature other than their default (1) and
+# error out if 0.0 is sent. gpt-4o accepts an explicit 0.0 and that's the
+# deliberate default here for deterministic answers; switching
+# AZURE_OPENAI_ANSWER_DEPLOYMENT to a reasoning model also requires setting
+# this to "" so the call doesn't fail.
+AZURE_OPENAI_ANSWER_TEMPERATURE = os.environ.get("AZURE_OPENAI_ANSWER_TEMPERATURE", "0.0")
+# Cheap model used for the follow-up-question answerability check
+# (_follow_up_answerable) below. gpt-4o-mini is the non-reasoning default,
+# but an environment may only have a reasoning-family model deployed (e.g.
+# gpt-5-mini) — see AZURE_OPENAI_CLASSIFY_REASONING_EFFORT/_MAX_TOKENS for
+# what that requires.
 AZURE_OPENAI_CLASSIFY_DEPLOYMENT = os.environ.get("AZURE_OPENAI_CLASSIFY_DEPLOYMENT", "gpt-4o-mini")
+# Empty by default (omitted from the payload) — only reasoning-family
+# models (gpt-5-mini, o-series, ...) accept "reasoning_effort"; a
+# non-reasoning model like gpt-4o-mini doesn't need it. Set to "low" (or
+# "minimal", where supported) when AZURE_OPENAI_CLASSIFY_DEPLOYMENT is a
+# reasoning model, to keep this trivial yes/no check's reasoning-token
+# spend (and cost) to a minimum.
+AZURE_OPENAI_CLASSIFY_REASONING_EFFORT = os.environ.get("AZURE_OPENAI_CLASSIFY_REASONING_EFFORT", "")
+# A reasoning model spends part of this budget on hidden reasoning tokens
+# before any visible "yes"/"no" — the same failure mode already confirmed
+# live for the main answer call (see AZURE_OPENAI_ANSWER_MAX_TOKENS above),
+# just far smaller here since this is a trivial classification, not a full
+# structured answer. 5 tokens (enough for a non-reasoning model) would
+# starve a reasoning model into an empty reply every time.
+AZURE_OPENAI_CLASSIFY_MAX_TOKENS = int(os.environ.get("AZURE_OPENAI_CLASSIFY_MAX_TOKENS", "150"))
 SEARCH_TOP_K = int(os.environ.get("SEARCH_TOP_K", "5"))
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("ANSWER_REQUEST_TIMEOUT_SECONDS", "30"))
 
@@ -295,10 +322,18 @@ def generate_structured_response(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question},
         ],
-        "temperature": 0.0,
-        "max_tokens": 900,
+        # max_completion_tokens (not the deprecated max_tokens) — required
+        # by reasoning-family models, and accepted by gpt-4o too (confirmed
+        # directly against the real endpoint), so this is safe either way.
+        # 2000 (not the old 900): a reasoning model spends part of this
+        # budget on hidden reasoning tokens before any visible output is
+        # produced — confirmed live that a too-small budget can be entirely
+        # consumed by reasoning, leaving an empty answer.
+        "max_completion_tokens": AZURE_OPENAI_ANSWER_MAX_TOKENS,
         "response_format": {"type": "json_object"},
     }
+    if AZURE_OPENAI_ANSWER_TEMPERATURE:
+        payload["temperature"] = float(AZURE_OPENAI_ANSWER_TEMPERATURE)
     resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
@@ -358,19 +393,71 @@ def resolve_cited_chunks(chunks: list[dict], reference_numbers: object) -> list[
     return resolved
 
 
+def _follow_up_answerable(question_text: str, chunk: dict) -> bool:
+    """Confirms the chunk the model cited for this follow-up actually
+    answers it — the model's own reference_number claim is otherwise
+    trusted blindly, and occasionally wrong (a plausible-sounding
+    follow-up whose cited reference doesn't really cover it), which
+    surfaces a question that leads the user to a dead end when they ask
+    it next.
+
+    Deliberately NOT a second full generate_structured_response() call
+    (that would re-run an entire search+gpt-4o answer per follow-up, up
+    to 3x the cost of the original question). Instead: one minimal
+    yes/no classification on the cheap AZURE_OPENAI_CLASSIFY_DEPLOYMENT
+    model (gpt-4o-mini), reusing content already fetched for the current
+    answer — no extra search/embedding call either.
+    """
+    content = (chunk.get("content") or "")[:1500]
+    if not content.strip():
+        return False
+    url = (
+        f"{AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/"
+        f"{AZURE_OPENAI_CLASSIFY_DEPLOYMENT}/chat/completions"
+        f"?api-version={AZURE_OPENAI_API_VERSION}"
+    )
+    headers = {"api-key": AZURE_OPENAI_API_KEY, "Content-Type": "application/json"}
+    payload = {
+        "messages": [
+            {"role": "system", "content": "Answer with exactly one word: yes or no."},
+            {
+                "role": "user",
+                "content": (
+                    f"Content:\n{content}\n\nQuestion: {question_text}\n\n"
+                    "Does the content above directly and completely answer this question?"
+                ),
+            },
+        ],
+        "max_completion_tokens": AZURE_OPENAI_CLASSIFY_MAX_TOKENS,
+    }
+    if AZURE_OPENAI_CLASSIFY_REASONING_EFFORT:
+        payload["reasoning_effort"] = AZURE_OPENAI_CLASSIFY_REASONING_EFFORT
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        reply = resp.json()["choices"][0]["message"]["content"].strip().lower()
+        return reply.startswith("yes")
+    except Exception:  # noqa: BLE001 — a failed check should drop the follow-up, not break the real answer
+        logger.warning("Follow-up answerability check failed for %r; dropping it.", question_text[:80])
+        return False
+
+
 def resolve_valid_follow_ups(chunks: list[dict], raw_follow_ups: object) -> list[str]:
     """Keeps only follow-up questions whose reference_number genuinely
-    points at one of the numbered references actually shown to the model
-    — drops anything malformed, missing a reference, or pointing out of
-    range, rather than surfacing a question to the user that would lead to
-    a dead end. Shared between helpdesk_answer's own response building and
-    live_url_search.py's (both call generate_structured_response() and
+    points at one of the numbered references actually shown to the model,
+    AND whose cited content is confirmed (via _follow_up_answerable) to
+    actually answer it — drops anything malformed, out of range, or
+    unconfirmed, rather than surfacing a question that would lead to a
+    dead end. Shared between helpdesk_answer's own response building and
+    crawl_url_search.py's (both call generate_structured_response() and
     need the same guarantee).
     """
     if not isinstance(raw_follow_ups, list):
         return []
     valid: list[str] = []
     for item in raw_follow_ups:
+        if len(valid) >= 3:
+            break
         if not isinstance(item, dict):
             continue
         question_text = item.get("question")
@@ -379,8 +466,34 @@ def resolve_valid_follow_ups(chunks: list[dict], raw_follow_ups: object) -> list
             continue
         if not isinstance(ref, int) or not (1 <= ref <= len(chunks)):
             continue
+        if not _follow_up_answerable(question_text, chunks[ref - 1]):
+            continue
         valid.append(question_text)
-    return valid[:3]
+    return valid
+
+
+_INLINE_BULLET_PATTERN = re.compile(r"([.:])\s+-\s+")
+
+
+def normalize_bullet_formatting(text: str) -> str:
+    """The system prompt asks for bullets on their own line ("- " at the
+    start of a line), but the model doesn't always comply — sometimes it
+    runs every bullet into one paragraph instead, e.g. "...over $25. -
+    Attach a receipt... - Ensure the receipt...". Rather than trust prompt
+    compliance alone (already proven unreliable elsewhere in this file —
+    see require_actionable_resolution/conversation_history), this fixes it
+    deterministically: wherever a sentence/clause end (". " or ": ") is
+    immediately followed by "- ", that's a bullet marker that should have
+    started a new line, so a newline is inserted before it.
+
+    Deliberately narrow: only matches "<.  or :><space>-<space>", not every
+    "-" in the text — a real hyphenated word ("well-known") or a range
+    ("9am - 5pm") never has a preceding period/colon right before the dash,
+    so those are left untouched.
+    """
+    if not text:
+        return text
+    return _INLINE_BULLET_PATTERN.sub(r"\1\n- ", text)
 
 
 def _generate_and_format(
@@ -422,13 +535,39 @@ def _generate_and_format(
         "subject": structured.get("subject", ""),
         "description": structured.get("description", ""),
         "status": "answered",
-        "answer": structured.get("answer", ""),
+        "answer": normalize_bullet_formatting(structured.get("answer", "")),
         "category": top.get("category", ""),
         "subcategory": top.get("sub_category", ""),
         "source": top.get("source_type", ""),
         "sources": _build_sources(top_sources),
         "follow_up_questions": resolve_valid_follow_ups(chunks, structured.get("follow_up_questions")),
     }
+
+
+GREETING_RESPONSE_TEXT = (
+    "Hi! \U0001F44B Welcome to the Helpdesk. I'm here to assist you.\n\n"
+    "Please let me know how I can help, and briefly explain the issue or "
+    "trouble you're facing. I'll be happy to guide you through it."
+)
+
+# A bare greeting ("helpdesk", "hi helpdesk", "hi", "hello team", ...) has
+# no real question in it, so running it through ticket/library/website
+# search would just waste a search cycle and most likely come back
+# not_found anyway. Checked as an exact set of words (not a substring
+# match) so a real question that happens to mention "helpdesk" — "how do I
+# contact the helpdesk?" — is never mistaken for a greeting.
+_GREETING_WORDS = {
+    "hi", "hii", "hiya", "hey", "heya", "hello", "helo", "yo", "greetings", "greeting",
+    "helpdesk", "team", "there", "everyone",
+}
+
+
+def _is_pure_greeting(question: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9\s]", " ", question.lower()).strip()
+    if not normalized:
+        return False
+    words = normalized.split()
+    return len(words) <= 4 and all(word in _GREETING_WORDS for word in words)
 
 
 def answer_question(question: str, conversation_history: Optional[list[dict]] = None) -> dict:
@@ -451,6 +590,19 @@ def answer_question(question: str, conversation_history: Optional[list[dict]] = 
     pass an empty list) for plain single-turn behavior, unchanged from
     before this parameter existed.
     """
+    if _is_pure_greeting(question):
+        return {
+            "subject": "Welcome",
+            "description": "Greeting",
+            "status": "answered",
+            "answer": GREETING_RESPONSE_TEXT,
+            "category": "",
+            "subcategory": "",
+            "source": "",
+            "sources": [],
+            "follow_up_questions": [],
+        }
+
     try:
         ticket_chunks = search_chunks(question, source_type_filter="ticket")
     except Exception:  # noqa: BLE001

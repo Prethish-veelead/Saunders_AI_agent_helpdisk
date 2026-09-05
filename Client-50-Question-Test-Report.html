@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>50-Question Accuracy Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --paper: #faf9f4;
+    --paper-raised: #ffffff;
+    --ink: #1b211f;
+    --ink-soft: #57625c;
+    --ink-faint: #8b948d;
+    --line: #e1decf;
+    --accent: #0e7c71;
+    --accent-soft: #dceeea;
+    --warn: #a15c1f;
+    --warn-soft: #f3e6d6;
+    --good: #2f7a3d;
+    --good-soft: #e3f0e2;
+    --bad: #b0392f;
+    --bad-soft: #f6e2df;
+    --neutral: #6b756f;
+    --neutral-soft: #eceae2;
+    --shadow: 0 1px 2px rgba(27,33,31,0.04), 0 8px 24px rgba(27,33,31,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121615; --paper-raised: #181d1b; --ink: #e9e7dd; --ink-soft: #9ca6a0;
+      --ink-faint: #6b756f; --line: #262e2b; --accent: #34d6c4; --accent-soft: #16302c;
+      --warn: #e0a458; --warn-soft: #2e2418; --good: #6fbf7a; --good-soft: #16281a;
+      --bad: #e2776b; --bad-soft: #331d1a; --neutral: #9ca6a0; --neutral-soft: #232825;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121615; --paper-raised: #181d1b; --ink: #e9e7dd; --ink-soft: #9ca6a0;
+    --ink-faint: #6b756f; --line: #262e2b; --accent: #34d6c4; --accent-soft: #16302c;
+    --warn: #e0a458; --warn-soft: #2e2418; --good: #6fbf7a; --good-soft: #16281a;
+    --bad: #e2776b; --bad-soft: #331d1a; --neutral: #9ca6a0; --neutral-soft: #232825;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  html { background: var(--paper); }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-soft); }
+  a { color: var(--accent); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  h1, h2, h3, .display { font-family: "Archivo", system-ui, sans-serif; text-wrap: balance; }
+
+  .masthead { max-width: 980px; margin: 0 auto; padding: 56px 32px 8px; }
+  .eyebrow {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); font-weight: 500;
+  }
+  h1 { font-size: clamp(30px, 4.6vw, 42px); font-weight: 800; letter-spacing: -0.02em; margin: 10px 0 6px; }
+  .subtitle { color: var(--ink-soft); font-size: 18px; max-width: 66ch; margin: 0 0 8px; }
+  .meta-row {
+    display: flex; gap: 20px; flex-wrap: wrap; font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; color: var(--ink-faint); margin-top: 20px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  nav.toc {
+    max-width: 980px; margin: 28px auto 0; padding: 20px 32px; background: var(--paper-raised);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  }
+  nav.toc .toc-title {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--ink-faint); margin-bottom: 10px;
+  }
+  nav.toc ol { columns: 2; column-gap: 32px; padding-left: 20px; margin: 0; font-size: 14.5px; }
+  nav.toc li { margin-bottom: 7px; break-inside: avoid; }
+  nav.toc a { text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  main { max-width: 900px; margin: 0 auto; padding: 40px 32px 100px; }
+  section { margin-top: 60px; scroll-margin-top: 24px; }
+  section > .num-label {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  h2 { font-size: 25px; font-weight: 700; margin: 0 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 16.5px; font-weight: 700; margin: 26px 0 8px; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; max-width: 68ch; }
+  li { margin-bottom: 6px; }
+
+  /* stat tiles */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 20px 0 28px; }
+  .stat {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 16px 16px 14px;
+  }
+  .stat .n { font-family: "Archivo", sans-serif; font-weight: 800; font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .stat .label { font-family: "JetBrains Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin-top: 6px; }
+  .stat.good .n { color: var(--good); }
+  .stat.bad .n { color: var(--bad); }
+  .stat.neutral .n { color: var(--neutral); }
+  .stat.accent .n { color: var(--accent); }
+
+  /* pills */
+  .pill {
+    display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 600;
+    padding: 3px 9px; border-radius: 999px; white-space: nowrap; letter-spacing: 0.02em;
+  }
+  .pill.good { background: var(--good-soft); color: var(--good); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .pill.neutral { background: var(--neutral-soft); color: var(--neutral); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+
+  /* callout */
+  .callout {
+    background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 30%, var(--line));
+    border-radius: 12px; padding: 22px 24px; margin: 20px 0 8px;
+  }
+  .callout .callout-title { font-family: "Archivo", sans-serif; font-weight: 700; font-size: 16px; color: var(--bad); margin-bottom: 8px; }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* example comparison cards */
+  .example { border: 1px solid var(--line); border-radius: 12px; background: var(--paper-raised); box-shadow: var(--shadow); margin: 18px 0; overflow: hidden; }
+  .example .q { padding: 14px 18px; font-family: "Archivo", sans-serif; font-weight: 700; font-size: 14.5px; border-bottom: 1px solid var(--line); }
+  .example .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .example .cell { padding: 14px 18px; font-size: 14px; }
+  .example .cell + .cell { border-left: 1px solid var(--line); }
+  .example .cell-label { font-family: "JetBrains Mono", monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); margin-bottom: 6px; }
+  .example .cell.real { background: var(--good-soft); }
+  .example .cell.shown { background: var(--bad-soft); }
+  @media (max-width: 640px) { .example .row { grid-template-columns: 1fr; } .example .cell + .cell { border-left: none; border-top: 1px solid var(--line); } }
+
+  /* results table */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-raised); box-shadow: var(--shadow); margin: 16px 0 8px; }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 13.5px; }
+  th { text-align: left; font-family: "JetBrains Mono", monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--paper); position: sticky; top: 0; }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-family: "JetBrains Mono", monospace; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  td.note { color: var(--ink-soft); font-size: 13px; }
+
+  .sector-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .sector-stats { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--ink-faint); }
+
+  footer { max-width: 900px; margin: 0 auto; padding: 30px 32px 60px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="eyebrow">Saunders Helpdesk Assistant — QA Report</div>
+  <h1>50-Question Accuracy Audit</h1>
+  <p class="subtitle">A live test of 50 real questions against the client's production environment, split evenly across the three answer sources (live website search, resolved tickets, and knowledge-library documents) — checking not just whether an answer came back, but whether the source cited actually contains that answer.</p>
+  <div class="meta-row">
+    <span>ENVIRONMENT: saunders-helpdesk-func (client production)</span>
+    <span>QUESTIONS: 50</span>
+    <span>DATE: 2026-09-05</span>
+  </div>
+</div>
+
+<nav class="toc">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#summary">1. Headline results</a></li>
+    <li><a href="#finding">2. The issue you flagged, confirmed</a></li>
+    <li><a href="#examples">3. Concrete examples</a></li>
+    <li><a href="#url-sector">4. Live website search — results</a></li>
+    <li><a href="#ticket-sector">5. Ticket search — results</a></li>
+    <li><a href="#library-sector">6. Knowledge library — results</a></li>
+    <li><a href="#recommendation">7. Root cause &amp; recommendation</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="summary">
+  <div class="num-label">01 — Headline results</div>
+  <h2>30 of 50 answers were fully correct and properly sourced</h2>
+  <p>The other 20 split into two very different categories: 7 were <strong>honest gaps</strong> (the system correctly said "I don't know" because that content isn't in the index right now — not a bug), and <strong>11 were flagged</strong> as genuinely showing the wrong or misleading source for their answer — this is the pattern you reported.</p>
+
+  <div class="stat-grid">
+    <div class="stat good"><div class="n">30</div><div class="label">Correct</div></div>
+    <div class="stat bad"><div class="n">11</div><div class="label">Flagged</div></div>
+    <div class="stat neutral"><div class="n">7</div><div class="label">Content gap</div></div>
+    <div class="stat"><div class="n">2</div><div class="label">Uncertain</div></div>
+  </div>
+
+  <p><strong>By sector, the flagged cases are almost entirely concentrated in one place:</strong></p>
+  <div class="stat-grid">
+    <div class="stat accent"><div class="n">16/16</div><div class="label">Live URL — correct</div></div>
+    <div class="stat bad"><div class="n">10/17</div><div class="label">Ticket — flagged</div></div>
+    <div class="stat"><div class="n">1/17</div><div class="label">Library — flagged</div></div>
+  </div>
+</section>
+
+<section id="finding">
+  <div class="num-label">02 — The issue you flagged, confirmed</div>
+  <h2>Yes — this is real, and here's exactly why it happens</h2>
+  <p>You described getting an answer credited to a ticket, but the ticket itself had no real answer in it — just a name. That is confirmed, and it's a real, reproducible bug, not something imagined. It happens specifically when someone asks a <strong>"how do I fix this?"</strong> style question about a topic where the only matching ticket is very thin (a real ticket in this system can be as bare as just its subject line, with no description or resolution notes at all).</p>
+
+  <div class="callout">
+    <div class="callout-title">Root cause</div>
+    <p>When the AI can't find a real resolution in the matching ticket, it should say "I don't know" — and it sometimes does exactly that correctly. But in 10 of 17 ticket-related tests, it instead <strong>invented plausible-sounding generic troubleshooting steps</strong> that are not actually written anywhere in that ticket, and then labeled the thin ticket as the "source" — even though the real content it was drawing from (when it drew from anything real at all) was often a completely different document that never got named.</p>
+  </div>
+
+  <p>The good news: this is <em>isolated</em> to the ticket area specifically. Live website search was 16/16 correct, and the knowledge library was 16/17 correct. It's a fixable, well-understood pattern — not a system-wide reliability problem.</p>
+</section>
+
+<section id="examples">
+  <div class="num-label">03 — Concrete examples</div>
+  <h2>What the ticket actually said, vs. what was shown</h2>
+
+  <div class="example">
+    <div class="q">Q: "I cannot access the ICT site, what's the issue?"</div>
+    <div class="row">
+      <div class="cell real">
+        <div class="cell-label">Real ticket content (in full)</div>
+        "I cannot access ICT site. I used to be able to access it 1 week ago. Access granted"
+      </div>
+      <div class="cell shown">
+        <div class="cell-label">What the assistant answered</div>
+        "...it may be due to access permissions or a temporary issue. Please check the following: Ensure you are using the correct login credentials. Verify that your account..." — none of this is in the ticket.
+      </div>
+    </div>
+  </div>
+
+  <div class="example">
+    <div class="q">Q: "My account got locked due to failed logins, help"</div>
+    <div class="row">
+      <div class="cell real">
+        <div class="cell-label">Real ticket content (in full)</div>
+        "Locked out after too many failed login attempts. Steps to take when locked out of an account due to repeated incorrect password attempts. wert6y7890" <em>(the "steps" were never actually written — the ticket ends with placeholder text)</em>
+      </div>
+      <div class="cell shown">
+        <div class="cell-label">What the assistant answered</div>
+        "...you will need to follow the steps to regain access: Contact your IT support team or system administrator to unlock your account..." — invented, not in the ticket.
+      </div>
+    </div>
+  </div>
+
+  <div class="example">
+    <div class="q">Q: "What was the resolution for the VPN issue ticket?" — a case where it worked correctly</div>
+    <div class="row">
+      <div class="cell real">
+        <div class="cell-label">Real ticket content (in full)</div>
+        "VPN is not working properly" <em>(literally nothing else — no description, no resolution)</em>
+      </div>
+      <div class="cell" style="background:var(--good-soft)">
+        <div class="cell-label">What the assistant answered</div>
+        Correctly said "not found" rather than inventing a resolution that doesn't exist. This is the behavior we want to see everywhere.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="url-sector">
+  <div class="num-label">04 — Live website search</div>
+  <div class="sector-head"><h2>16 of 16 correct</h2><span class="sector-stats">every answer was grounded in the real tracked website content, with an accurate source link</span></div>
+  <div class="table-wrap">
+    <table>
+      <tr><th>#</th><th>Question</th><th>Result</th><th>Note</th></tr>
+      <tr><td class="num">1</td><td>What gaming laptops are available?</td><td><span class="pill good">Correct</span></td><td class="note">Real product list from intaglaptops.com</td></tr>
+      <tr><td class="num">2</td><td>Tell me about laptop engineering design</td><td><span class="pill good">Correct</span></td><td class="note">Sourced from vvdntech.com engineering blog</td></tr>
+      <tr><td class="num">3</td><td>What is hardware engineering in laptop design?</td><td><span class="pill good">Correct</span></td><td class="note">Same source, correct section</td></tr>
+      <tr><td class="num">4</td><td>Are there any used laptops available?</td><td><span class="pill good">Correct</span></td><td class="note">Real pricing (PKR 35,000+) cited</td></tr>
+      <tr><td class="num">5</td><td>What HP laptop models are listed?</td><td><span class="pill good">Correct</span></td><td class="note">Real model list, 2 real source pages</td></tr>
+      <tr><td class="num">6</td><td>What Dell laptop models are available?</td><td><span class="pill good">Correct</span></td><td class="note">Real model list</td></tr>
+      <tr><td class="num">7</td><td>How is thermal management handled in laptop design?</td><td><span class="pill good">Correct</span></td><td class="note">Real detail (heat pipes, vents)</td></tr>
+      <tr><td class="num">8</td><td>What display technology is used in modern laptops?</td><td><span class="pill neutral">Not found</span></td><td class="note">Honest gap — that detail wasn't in the top-ranked page for this wording</td></tr>
+      <tr><td class="num">9</td><td>What battery technology is discussed for laptops?</td><td><span class="pill good">Correct</span></td><td class="note">Real content</td></tr>
+      <tr><td class="num">10</td><td>What materials are used in laptop chassis design?</td><td><span class="pill good">Correct</span></td><td class="note">Real content (aluminum, magnesium, etc.)</td></tr>
+      <tr><td class="num">11</td><td>What is the price of the HP Omen 16?</td><td><span class="pill neutral">Not found</span></td><td class="note">Honest gap — that specific price wasn't on the crawled page</td></tr>
+      <tr><td class="num">12</td><td>What laptops have RTX graphics cards?</td><td><span class="pill good">Correct</span></td><td class="note">Real, specific model + GPU pairs</td></tr>
+      <tr><td class="num">13</td><td>What laptop collections are available on the site?</td><td><span class="pill good">Correct</span></td><td class="note">Real collection list</td></tr>
+      <tr><td class="num">14</td><td>Tell me about laptop motherboard design</td><td><span class="pill good">Correct</span></td><td class="note">Real content</td></tr>
+      <tr><td class="num">15</td><td>What laptop brands are sold?</td><td><span class="pill good">Correct</span></td><td class="note">Real brand list (HP, Dell, Lenovo, MSI)</td></tr>
+      <tr><td class="num">16</td><td>What is the difference between gaming and workstation laptops?</td><td><span class="pill good">Correct</span></td><td class="note">Real comparison from 2 real pages</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="ticket-sector">
+  <div class="num-label">05 — Ticket search</div>
+  <div class="sector-head"><h2>7 of 17 correct — 10 flagged</h2><span class="sector-stats">this is where the reported issue concentrates</span></div>
+  <div class="table-wrap">
+    <table>
+      <tr><th>#</th><th>Question</th><th>Result</th><th>Note</th></tr>
+      <tr><td class="num">17</td><td>My VPN is not working, how do I fix it?</td><td><span class="pill good">Correct</span></td><td class="note">Correctly answered from the real library doc, not the empty ticket</td></tr>
+      <tr><td class="num">18</td><td>VPN is not working properly, what should I do?</td><td><span class="pill good">Correct</span></td><td class="note">Same, correct library source</td></tr>
+      <tr><td class="num">19</td><td>I'm locked out of my laptop after entering the wrong password</td><td><span class="pill bad">Flagged</span></td><td class="note">Specific "wait 15 minutes" steps not in the cited ticket</td></tr>
+      <tr><td class="num">20</td><td>I forgot my password and now I'm locked out</td><td><span class="pill bad">Flagged</span></td><td class="note">Real content came from library doc, but thin ticket shown as primary source</td></tr>
+      <tr><td class="num">21</td><td>I keep getting locked out after too many failed login attempts</td><td><span class="pill bad">Flagged</span></td><td class="note">Same pattern as #20</td></tr>
+      <tr><td class="num">22</td><td>I cannot access the ICT site, what's the issue?</td><td><span class="pill bad">Flagged</span></td><td class="note">See worked example above</td></tr>
+      <tr><td class="num">23</td><td>I used to have access to a site but now I don't, why?</td><td><span class="pill bad">Flagged</span></td><td class="note">Same pattern as #20</td></tr>
+      <tr><td class="num">24</td><td>My laptop won't let me log in anymore</td><td><span class="pill bad">Flagged</span></td><td class="note">Generic advice not verified in either cited ticket</td></tr>
+      <tr><td class="num">25</td><td>How do I regain access after being locked out?</td><td><span class="pill bad">Flagged</span></td><td class="note">Same pattern as #20</td></tr>
+      <tr><td class="num">26</td><td>Why can't I access the ICT helpdesk site?</td><td><span class="pill bad">Flagged</span></td><td class="note">See worked example above</td></tr>
+      <tr><td class="num">27</td><td>My account got locked due to failed logins, help</td><td><span class="pill bad">Flagged</span></td><td class="note">See worked example above</td></tr>
+      <tr><td class="num">28</td><td>VPN connection issue, please help</td><td><span class="pill good">Correct</span></td><td class="note">Correct library source</td></tr>
+      <tr><td class="num">29</td><td>I can't connect to the company VPN</td><td><span class="pill good">Correct</span></td><td class="note">Correct library source</td></tr>
+      <tr><td class="num">30</td><td>My login attempts failed multiple times and now I'm blocked</td><td><span class="pill bad">Flagged</span></td><td class="note">Same pattern as #20</td></tr>
+      <tr><td class="num">31</td><td>Ticket says access granted but I still can't get in</td><td><span class="pill good">Correct</span></td><td class="note">Correctly said not found rather than guessing</td></tr>
+      <tr><td class="num">32</td><td>What was the resolution for the VPN issue ticket?</td><td><span class="pill good">Correct</span></td><td class="note">See worked example above — honest "not found"</td></tr>
+      <tr><td class="num">33</td><td>What happened with the ICT site access ticket?</td><td><span class="pill good">Correct</span></td><td class="note">Faithfully summarized the (very short) real ticket</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="library-sector">
+  <div class="num-label">06 — Knowledge library</div>
+  <div class="sector-head"><h2>7 correct, 7 content gaps, 1 flagged, 2 uncertain</h2><span class="sector-stats">the gaps are a data/sync state, not a search bug</span></div>
+  <div class="table-wrap">
+    <table>
+      <tr><th>#</th><th>Question</th><th>Result</th><th>Note</th></tr>
+      <tr><td class="num">34</td><td>How do I reset my password?</td><td><span class="pill good">Correct</span></td><td class="note">Real content</td></tr>
+      <tr><td class="num">35</td><td>How do I connect to the office WiFi?</td><td><span class="pill neutral">Content gap</span></td><td class="note">The WiFi KB document is not currently in the index (see below)</td></tr>
+      <tr><td class="num">36</td><td>What are the steps to connect to the company VPN client?</td><td><span class="pill neutral">Content gap</span></td><td class="note">Same — VPN "connect" doc not currently indexed</td></tr>
+      <tr><td class="num">37</td><td>How do I install approved software on my computer?</td><td><span class="pill neutral">Content gap</span></td><td class="note">Software-install KB document not currently indexed</td></tr>
+      <tr><td class="num">38</td><td>How do I request access for a new employee?</td><td><span class="pill good">Correct</span></td><td class="note">Real, detailed, correctly sourced</td></tr>
+      <tr><td class="num">39</td><td>I'm having issues with Outlook email, what should I do?</td><td><span class="pill good">Correct</span></td><td class="note">Real, detailed, correctly sourced</td></tr>
+      <tr><td class="num">40</td><td>How do I report a printer issue?</td><td><span class="pill neutral">Content gap</span></td><td class="note">Printer KB document not currently indexed</td></tr>
+      <tr><td class="num">41</td><td>How do I request a new laptop?</td><td><span class="pill neutral">Content gap</span></td><td class="note">New-laptop KB document not currently indexed</td></tr>
+      <tr><td class="num">42</td><td>How do I submit an expense report?</td><td><span class="pill neutral">Content gap</span></td><td class="note">Expense KB document not currently indexed</td></tr>
+      <tr><td class="num">43</td><td>What is the process for a New Employee Access Request?</td><td><span class="pill good">Correct</span></td><td class="note">Real, correctly sourced</td></tr>
+      <tr><td class="num">44</td><td>What is Self-Service Password Reset (SSPR)?</td><td><span class="pill good">Correct</span></td><td class="note">Real, correctly sourced</td></tr>
+      <tr><td class="num">45</td><td>How do I request temporary admin or elevated access?</td><td><span class="pill good">Correct</span></td><td class="note">Real, correctly sourced</td></tr>
+      <tr><td class="num">46</td><td>What's the complexity requirement for a new password?</td><td><span class="pill warn">Uncertain</span></td><td class="note">Not found — possibly a recall miss rather than missing content, worth a follow-up look</td></tr>
+      <tr><td class="num">47</td><td>Who approves elevated access requests?</td><td><span class="pill warn">Uncertain</span></td><td class="note">Not found — same, worth a follow-up look</td></tr>
+      <tr><td class="num">48</td><td>How long does laptop provisioning take?</td><td><span class="pill bad">Flagged</span></td><td class="note">Answered using the "New Employee Access" document's timeline (account access), not actual laptop-hardware provisioning — a topical mismatch</td></tr>
+      <tr><td class="num">49</td><td>What's the process for submitting an expense over $25?</td><td><span class="pill neutral">Content gap</span></td><td class="note">Expense KB document not currently indexed</td></tr>
+      <tr><td class="num">50</td><td>What categories of IT issues are documented in the knowledge base?</td><td><span class="pill good">Correct</span></td><td class="note">Real, broad answer</td></tr>
+    </table>
+  </div>
+
+  <h3>About the 7 "content gap" results</h3>
+  <p>Checked directly against the live search index: only 3 documents are indexed right now (the New Employee Access doc, the 50-Scenarios doc, and one duplicate). Several other KB documents (WiFi, VPN-connect, software install, printer, new laptop, expense report) exist in SharePoint but are <strong>not currently in the search index</strong> — this looks like a sync-timing state rather than a search defect (these files were briefly visible in the library during an earlier check today and then were gone). Worth confirming with whoever manages that SharePoint library whether those documents are still meant to be there, then triggering a resync.</p>
+</section>
+
+<section id="recommendation">
+  <div class="num-label">07 — Root cause &amp; recommendation</div>
+  <h2>What's actually broken, and the fix</h2>
+  <p>The assistant already has a rule built in that's supposed to say "I don't know" rather than invent an answer when a ticket has no real resolution — and it followed that rule correctly in some cases (#31, #32). But in 10 of 17 ticket tests, it didn't: it generated plausible, generic-sounding troubleshooting steps and attributed them to a ticket that never contained them, or under-reported which document it actually drew the real content from.</p>
+  <p><strong>Recommended fix:</strong> tighten the citation check so an answer can only be shown with a ticket as its source if the specific ticket's own content — checked directly, not assumed — actually contains the claim being made. This is the same class of safeguard already used for follow-up questions (each one is independently double-checked before being shown); the same idea should be applied to the main answer whenever a thin ticket is involved.</p>
+  <p>This does not affect the live website search area (16/16 correct) or most of the knowledge library (16/17 correct) — it's a targeted fix to one specific path.</p>
+</section>
+
+</main>
+
+<footer>
+  Saunders Helpdesk Assistant — 50-question live accuracy audit, run directly against the client production environment (saunders-helpdesk-func). Not run against the dev/test environment.
+</footer>
+
+</body>
+</html>

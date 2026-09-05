@@ -83,6 +83,101 @@ def test_no_citation_markers_in_answer():
 
 
 # --------------------------------------------------------------------------
+# (a1c) normalize_bullet_formatting(): fixes inline "- " bullets the model
+# sometimes produces instead of real line breaks, without touching answers
+# that are already correct or don't have bullets at all
+# --------------------------------------------------------------------------
+
+def test_normalize_bullet_formatting():
+    print("\n--- (a1c) normalize_bullet_formatting fixes inline bullets, leaves everything else untouched ---")
+
+    real_bug_case = (
+        "Receipts are required for any expense line item over $25. - Attach a receipt image "
+        "to the corresponding expense line item in the Concur system. - Ensure the receipt "
+        "clearly shows the amount, date, and vendor details."
+    )
+    fixed = helpdesk_answer.normalize_bullet_formatting(real_bug_case)
+    check(
+        "the real reported case gets real newlines inserted before each bullet",
+        fixed == (
+            "Receipts are required for any expense line item over $25.\n"
+            "- Attach a receipt image to the corresponding expense line item in the Concur system.\n"
+            "- Ensure the receipt clearly shows the amount, date, and vendor details."
+        ),
+        f"got {fixed!r}",
+    )
+
+    already_correct = "Restart your VPN client.\n- Check your internet connection.\n- Try again in 5 minutes."
+    check(
+        "an already-correctly-formatted answer is left byte-identical",
+        helpdesk_answer.normalize_bullet_formatting(already_correct) == already_correct,
+    )
+
+    single_sentence = "Your password will be reset within 24 hours."
+    check(
+        "a plain single-sentence answer with no bullets is untouched",
+        helpdesk_answer.normalize_bullet_formatting(single_sentence) == single_sentence,
+    )
+
+    hyphenated = "This is a well-known issue with the older client."
+    check(
+        "a hyphenated word is NOT mistaken for a bullet marker",
+        helpdesk_answer.normalize_bullet_formatting(hyphenated) == hyphenated,
+    )
+
+    time_range = "Support hours are 9am - 5pm on weekdays."
+    check(
+        "a time range (no preceding period/colon) is NOT mistaken for a bullet marker",
+        helpdesk_answer.normalize_bullet_formatting(time_range) == time_range,
+    )
+
+    colon_led = "Steps: - Open the app. - Sign in. - Approve MFA."
+    check(
+        "a colon-led inline bullet list is also fixed",
+        helpdesk_answer.normalize_bullet_formatting(colon_led)
+        == "Steps:\n- Open the app.\n- Sign in.\n- Approve MFA.",
+    )
+
+    check("empty string returns empty string", helpdesk_answer.normalize_bullet_formatting("") == "")
+
+
+# --------------------------------------------------------------------------
+# (a1b) payload uses max_completion_tokens, and temperature is only sent
+# when AZURE_OPENAI_ANSWER_TEMPERATURE is non-empty — required for
+# reasoning-family models (e.g. gpt-5-mini) which reject any explicit
+# temperature other than their default and error out if 0.0 is sent
+# --------------------------------------------------------------------------
+
+def test_payload_uses_max_completion_tokens_and_conditional_temperature():
+    print("\n--- (a1b) payload: max_completion_tokens always sent, temperature only when configured ---")
+
+    with patch.object(helpdesk_answer, "AZURE_OPENAI_ENDPOINT", "https://fake.openai.azure.com"), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_API_KEY", "fake-key"), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_ANSWER_MAX_TOKENS", 2000), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_ANSWER_TEMPERATURE", "0.0"), \
+         patch("helpdesk_answer.requests.post", return_value=_mock_openai_response()) as mock_post:
+        helpdesk_answer.generate_structured_response("how do I fix my vpn", CHUNKS)
+
+    payload = mock_post.call_args.kwargs["json"]
+    check("max_tokens is never sent (deprecated param)", "max_tokens" not in payload, f"payload={payload!r}")
+    check("max_completion_tokens is sent with the configured value", payload.get("max_completion_tokens") == 2000)
+    check("temperature is sent as a float when configured", payload.get("temperature") == 0.0)
+
+    with patch.object(helpdesk_answer, "AZURE_OPENAI_ENDPOINT", "https://fake.openai.azure.com"), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_API_KEY", "fake-key"), \
+         patch.object(helpdesk_answer, "AZURE_OPENAI_ANSWER_TEMPERATURE", ""), \
+         patch("helpdesk_answer.requests.post", return_value=_mock_openai_response()) as mock_post:
+        helpdesk_answer.generate_structured_response("how do I fix my vpn", CHUNKS)
+
+    payload = mock_post.call_args.kwargs["json"]
+    check(
+        "temperature is omitted entirely when AZURE_OPENAI_ANSWER_TEMPERATURE is empty "
+        "(required for reasoning models that reject an explicit value)",
+        "temperature" not in payload, f"payload={payload!r}",
+    )
+
+
+# --------------------------------------------------------------------------
 # (a2) require_actionable_resolution adds the "don't return an incomplete
 # ticket resolution" rule to the prompt, only when explicitly requested
 # --------------------------------------------------------------------------
@@ -219,6 +314,8 @@ def test_malformed_history_entries_skipped():
 
 if __name__ == "__main__":
     test_no_citation_markers_in_answer()
+    test_normalize_bullet_formatting()
+    test_payload_uses_max_completion_tokens_and_conditional_temperature()
     test_actionable_resolution_rule_included_only_when_requested()
     test_conversation_history_included_in_prompt()
     test_no_history_matches_prior_prompt_shape()

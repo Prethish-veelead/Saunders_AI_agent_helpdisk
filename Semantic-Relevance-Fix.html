@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Semantic Relevance Fix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --paper: #faf9f4;
+    --paper-raised: #ffffff;
+    --ink: #1b211f;
+    --ink-soft: #57625c;
+    --ink-faint: #8b948d;
+    --line: #e1decf;
+    --accent: #0e7c71;
+    --accent-soft: #dceeea;
+    --warn: #a15c1f;
+    --warn-soft: #f3e6d6;
+    --bad: #b3432f;
+    --bad-soft: #f5e3df;
+    --good: #2f7a3d;
+    --good-soft: #e3f0e2;
+    --shadow: 0 1px 2px rgba(27,33,31,0.04), 0 8px 24px rgba(27,33,31,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121615; --paper-raised: #181d1b; --ink: #e9e7dd; --ink-soft: #9ca6a0;
+      --ink-faint: #6b756f; --line: #262e2b; --accent: #34d6c4; --accent-soft: #16302c;
+      --warn: #e0a458; --warn-soft: #2e2418; --bad: #e0796a; --bad-soft: #2e1e1a;
+      --good: #6fbf7a; --good-soft: #16281a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #121615; --paper-raised: #181d1b; --ink: #e9e7dd; --ink-soft: #9ca6a0;
+    --ink-faint: #6b756f; --line: #262e2b; --accent: #34d6c4; --accent-soft: #16302c;
+    --warn: #e0a458; --warn-soft: #2e2418; --bad: #e0796a; --bad-soft: #2e1e1a;
+    --good: #6fbf7a; --good-soft: #16281a;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  html { background: var(--paper); }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-soft); }
+  a { color: var(--accent); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  h1, h2, h3, .display { font-family: "Archivo", system-ui, sans-serif; text-wrap: balance; }
+
+  .masthead { max-width: 800px; margin: 0 auto; padding: 64px 32px 8px; }
+  .eyebrow {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); font-weight: 500;
+  }
+  h1 { font-size: clamp(32px, 5vw, 46px); font-weight: 800; letter-spacing: -0.02em; margin: 10px 0 6px; }
+  .subtitle { color: var(--ink-soft); font-size: 18px; max-width: 62ch; margin: 0 0 8px; }
+  .meta-row {
+    display: flex; gap: 20px; flex-wrap: wrap; font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; color: var(--ink-faint); margin-top: 20px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+
+  main { max-width: 760px; margin: 0 auto; padding: 8px 32px 100px; }
+  section { margin-top: 56px; }
+  section > .num-label {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  h2 { font-size: 26px; font-weight: 700; margin: 0 0 16px; letter-spacing: -0.01em; }
+  h3 { font-size: 17px; font-weight: 700; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; }
+  ul, ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+
+  /* before/after comparison cards */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+  @media (max-width: 640px) { .compare { grid-template-columns: 1fr; } }
+  .compare .card {
+    border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--paper-raised);
+    box-shadow: var(--shadow);
+  }
+  .compare .card.bad { border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); background: var(--bad-soft); }
+  .compare .card.good { border-color: color-mix(in srgb, var(--good) 35%, var(--line)); background: var(--good-soft); }
+  .compare .card .tag {
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 600; margin-bottom: 8px;
+  }
+  .compare .card.bad .tag { color: var(--bad); }
+  .compare .card.good .tag { color: var(--good); }
+  .compare .card .score { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--ink-soft); margin-bottom: 4px; }
+  .compare .card .page-title { font-weight: 600; font-size: 15px; }
+
+  .flow-mini { display: flex; align-items: stretch; gap: 0; min-width: 700px; padding: 4px 0 8px; margin: 18px 0; overflow-x: auto; }
+  .flow-mini .node {
+    flex: 1; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 10px;
+    padding: 13px 12px; box-shadow: var(--shadow);
+  }
+  .flow-mini .node .tag {
+    font-family: "JetBrains Mono", monospace; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--accent); margin-bottom: 4px;
+  }
+  .flow-mini .node .name { font-family: "Archivo", sans-serif; font-weight: 700; font-size: 13.5px; margin: 2px 0 5px; }
+  .flow-mini .node .desc { font-size: 11px; color: var(--ink-soft); line-height: 1.4; font-family: "JetBrains Mono", monospace; }
+  .flow-mini .arrow { width: 20px; flex: 0 0 20px; display: flex; align-items: center; justify-content: center; color: var(--accent); font-size: 14px; }
+
+  .callout {
+    border: 1px solid var(--line); background: var(--paper-raised); border-radius: 10px;
+    padding: 16px 18px; box-shadow: var(--shadow); margin: 18px 0;
+  }
+  .callout .label {
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 600; color: var(--accent); margin-bottom: 6px;
+  }
+  .callout.warn .label { color: var(--warn); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  .table-wrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 10px; }
+  .table-wrap table { min-width: 480px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: "JetBrains Mono", monospace; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--ink-faint); background: var(--paper-raised); font-weight: 500;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono { font-family: "JetBrains Mono", monospace; font-size: 13.5px; }
+  td.status-good { color: var(--good); font-weight: 600; }
+  td.status-bad { color: var(--bad); font-weight: 600; }
+
+  .part-badge {
+    display: inline-flex; align-items: center; gap: 8px; font-family: "JetBrains Mono", monospace;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft); padding: 5px 12px; border-radius: 999px;
+    margin-bottom: 14px;
+  }
+
+  .test-list { list-style: none; padding: 0; margin: 18px 0; }
+  .test-list li {
+    display: flex; gap: 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line);
+    font-size: 15px;
+  }
+  .test-list li:last-child { border-bottom: none; }
+  .test-list .n { font-family: "JetBrains Mono", monospace; color: var(--ink-faint); font-size: 13px; flex: 0 0 20px; }
+  .test-list .status { font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 600; color: var(--good); flex: 0 0 auto; margin-left: auto; }
+
+  footer {
+    max-width: 760px; margin: 0 auto; padding: 0 32px 64px; color: var(--ink-faint); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="eyebrow">Engineering Report</div>
+  <h1>Semantic Relevance Fix</h1>
+  <p class="subtitle">Why website search sometimes picked the wrong page — or the wrong site entirely — for real questions, and the two-part fix that replaced literal word-matching with meaning-based matching.</p>
+  <div class="meta-row">
+    <span>Prepared for: Engineering lead review</span>
+    <span>Component: Website search (Tier 2)</span>
+    <span>Status: Fixed, tested, deployed</span>
+  </div>
+</div>
+
+<main>
+
+<section>
+  <div class="num-label">The problem</div>
+  <h2>Same question, worded differently, different answer</h2>
+  <p>Testing surfaced three real, reproducible cases where the assistant either answered from the wrong page, or found nothing at all, even though the right content genuinely existed on a tracked site:</p>
+
+  <h3>Case 1 — a rephrased question failed entirely</h3>
+  <div class="compare">
+    <div class="card bad">
+      <div class="tag">Before</div>
+      <div class="page-title">"What screen sizes are available for Lenovo laptops?"</div>
+      <p style="margin:8px 0 0; font-size:14px;">→ "No answer found for your query."</p>
+    </div>
+    <div class="card good">
+      <div class="tag">Same question, different words</div>
+      <div class="page-title">"screen sizes of lenovo laptop"</div>
+      <p style="margin:8px 0 0; font-size:14px;">→ Answered correctly, with the real spec list.</p>
+    </div>
+  </div>
+
+  <h3>Case 2 — a follow-up question the assistant itself suggested, failed</h3>
+  <p>After answering a question about Python, the assistant suggested "What are the major implementations of Python?" as a follow-up. Clicking it returned nothing. The actual candidate ranking showed why:</p>
+  <div class="compare">
+    <div class="card bad">
+      <div class="tag">Old method scored this #1 — 100.0</div>
+      <div class="page-title">"Programming language implementation"</div>
+      <p style="margin:8px 0 0; font-size:14px;">A generic Wikipedia article about what "implementation" means in software — nothing to do with Python specifically.</p>
+    </div>
+    <div class="card bad" style="opacity:0.7;">
+      <div class="tag">The actual right page — crowded out entirely</div>
+      <div class="page-title">"Python (programming language)"</div>
+      <p style="margin:8px 0 0; font-size:14px;">Didn't even make the shortlist, despite covering Python's real implementations (CPython, PyPy, etc).</p>
+    </div>
+  </div>
+
+  <h3>Case 3 — one relevant site crowded out another, equally relevant, site</h3>
+  <p>For a generic "tell me about laptops" question, every top result came from one tracked laptop retailer site — a second tracked site, Lenovo's own site, never appeared at all, even though it obviously sells laptops.</p>
+</section>
+
+<section>
+  <div class="num-label">Root cause</div>
+  <h2>The old method compared words, not meaning</h2>
+  <p>Website search decided which page to use by comparing literal text — closer to a spell-checker than real understanding. In Case 2 above, the question contains the word <em>"implementations"</em>, and a page literally titled <em>"Programming language implementation"</em> matches that word almost perfectly — so it won, even though it's not about Python at all. The actual Python article, which uses the word "implementations" less directly, scored lower and got dropped.</p>
+  <p>This is a structural limitation, not a one-off glitch: text-matching has no way to know that "Lenovo" is a laptop brand, or that a rephrased question means the same thing as the original. Every case above traces back to this same root cause.</p>
+</section>
+
+<section>
+  <div class="num-label">The fix, part 1 of 2</div>
+  <div class="part-badge">Part 1 — Which site is relevant</div>
+  <h2>Deciding by meaning which tracked site to even look at</h2>
+  <p>Before crawling anything, each tracked site's name is compared against the question using an <strong>embedding</strong> — the same AI technique already used elsewhere in this system to search tickets and library documents, now applied here too. An embedding turns text into a set of numbers that represents its meaning, so "Lenovo" and "laptop" can be recognized as related even though they share no letters in common.</p>
+  <div class="flow-mini">
+    <div class="node"><div class="tag">01</div><div class="name">Tracked sites</div><div class="desc">Lenovo, laptop retailer, Python wiki, etc.</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">02</div><div class="name">Compare by meaning</div><div class="desc">Embedding similarity, not shared words</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">03</div><div class="name">Keep what's relevant</div><div class="desc">Only crawl sites that clear the bar</div></div>
+    <div class="arrow">→</div>
+    <div class="node"><div class="tag">04</div><div class="name">Safety net</div><div class="desc">Nothing clears it? Keep everything.</div></div>
+  </div>
+  <p>Real result for <strong>"tell me about laptops"</strong>: both the Lenovo site and the laptop retailer site are now correctly identified as relevant — where before, one crowded the other out entirely.</p>
+  <div class="callout warn">
+    <div class="label">Built with scale in mind, not just today's fix</div>
+    <p>Right now there are only 4 tracked sites, so this mostly fixes site-crowding. Once the client adds many more tracked sites, crawling every single one for every question stops being practical — this same step is what will keep that fast, by ruling out irrelevant sites before any crawling happens at all, rather than after.</p>
+  </div>
+</section>
+
+<section>
+  <div class="num-label">The fix, part 2 of 2</div>
+  <div class="part-badge">Part 2 — Which page within that site</div>
+  <h2>Deciding by meaning which specific page answers the question</h2>
+  <p>Once the relevant site(s) are chosen, their pages get crawled exactly as before. The change is in how the best page is picked: instead of comparing literal words, each candidate page's title is compared to the question the same way — by meaning, using an embedding.</p>
+  <p>This is the part that directly fixes Case 2. Re-run today, the ranking for <strong>"What are the major implementations of Python?"</strong> now looks like this:</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Rank</th><th>Page</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>1st</td><td class="mono">CPython</td><td class="status-good">Correct — CPython is literally one of the major implementations</td></tr>
+        <tr><td>2nd</td><td class="mono">Python (programming language)</td><td class="status-good">Correct — the main article, covers implementations directly</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The generic "Programming language implementation" article that previously won no longer even competes, once the site-level step above already narrowed things down to the Python site specifically.</p>
+</section>
+
+<section>
+  <div class="num-label">Verification</div>
+  <h2>How this was tested before being called done</h2>
+  <p>Every fix in this project gets tested against the real, original failure before being considered resolved — not just re-checked in theory:</p>
+  <ul class="test-list">
+    <li><span class="n">1</span> Case 1 (rephrased Lenovo question) — re-run live <span class="status">✓ Fixed</span></li>
+    <li><span class="n">2</span> Case 2 (Python follow-up question) — re-run live, full click-through <span class="status">✓ Fixed</span></li>
+    <li><span class="n">3</span> Case 3 (Lenovo vs. retailer site-crowding) — both sites now correctly identified <span class="status">✓ Fixed</span></li>
+    <li><span class="n">4</span> Previously-working questions re-tested, to confirm nothing broke <span class="status">✓ No regression</span></li>
+    <li><span class="n">5</span> 6 new automated tests, plus the full existing test suite (60+ checks) <span class="status">✓ All passing</span></li>
+  </ul>
+  <p>The relevance threshold used in Part 1 wasn't guessed — it was calibrated against real questions and the real tracked sites before deployment, specifically checking that it never excludes something genuinely relevant.</p>
+</section>
+
+<section>
+  <div class="num-label">Where this stands</div>
+  <h2>Deployed and live</h2>
+  <p>Both parts are deployed to the test environment and to the client's live system. On the client side specifically, this stays dormant for now — they haven't configured any tracked website URLs yet — but it's in place and tested, ready as soon as that happens.</p>
+</section>
+
+</main>
+
+<footer>
+  Saunders Helpdesk Assistant — internal engineering documentation.
+</footer>
+</body>
+</html>

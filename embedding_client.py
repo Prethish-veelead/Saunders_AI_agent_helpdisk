@@ -22,6 +22,19 @@ class EmbeddingConfigError(Exception):
 
 
 def get_embedding(text: str) -> list[float]:
+    return get_embeddings_batch([text])[0]
+
+
+def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
+    """Embeds many texts in one HTTP call — the embeddings API accepts a
+    list for "input" and returns one embedding per item, in the same
+    order. Used by crawl_url_search.py to score potentially 100+
+    candidate titles against a question without one network round-trip
+    per candidate (which would make live per-question crawling far too
+    slow). Returns [] for an empty input list without making a call.
+    """
+    if not texts:
+        return []
     if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
         raise EmbeddingConfigError("AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set.")
 
@@ -31,6 +44,10 @@ def get_embedding(text: str) -> list[float]:
         f"?api-version={AZURE_OPENAI_API_VERSION}"
     )
     headers = {"api-key": AZURE_OPENAI_API_KEY, "Content-Type": "application/json"}
-    resp = requests.post(url, headers=headers, json={"input": text}, timeout=30)
+    resp = requests.post(url, headers=headers, json={"input": texts}, timeout=60)
     resp.raise_for_status()
-    return resp.json()["data"][0]["embedding"]
+    # The API's own "data" order matches input order, but each item also
+    # carries an explicit "index" — sorting by that is a cheap guarantee
+    # against ever silently mismatching an embedding to the wrong text.
+    data = sorted(resp.json()["data"], key=lambda item: item["index"])
+    return [item["embedding"] for item in data]

@@ -189,6 +189,97 @@ def test_build_candidate_pool_skips_failed_seed():
 # (e) crawl_url_answer(): the full orchestration
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# (e0) embedding-based ranking/filtering — the fix for two real bugs found
+# live: fuzzy text matching (a) confused a generic Wikipedia article
+# titled "Programming language implementation" for the real Python page
+# when asked about Python's implementations (perfect literal word match,
+# wrong page), and (b) let a laptop retailer's own sub-pages crowd out
+# "Lenovo" for a generic "laptops" question, since "Lenovo" alone shares
+# no words with "laptop". Embeddings compare meaning, not characters.
+# --------------------------------------------------------------------------
+
+def test_cosine_similarity_basics():
+    print("\n--- _cosine_similarity: identical, opposite, and orthogonal vectors ---")
+
+    check("identical vectors score 1.0", crawl_url_search._cosine_similarity([1, 0], [1, 0]) == 1.0)
+    check("orthogonal vectors score 0.0", crawl_url_search._cosine_similarity([1, 0], [0, 1]) == 0.0)
+    check("opposite vectors score -1.0", crawl_url_search._cosine_similarity([1, 0], [-1, 0]) == -1.0)
+    check("a zero vector scores 0.0 (no divide-by-zero crash)", crawl_url_search._cosine_similarity([0, 0], [1, 1]) == 0.0)
+
+
+def test_rank_candidates_by_embedding_uses_meaning_not_literal_text():
+    print("\n--- rank_candidates_by_embedding picks the semantically closer candidate ---")
+    print("Real bug this fixes: fuzzy text matching scored a generic 'Programming language")
+    print("implementation' article above the actual Python page for a Python-implementations question.")
+
+    candidates = [
+        {"url": "https://en.wikipedia.org/wiki/Programming_language_implementation", "title": "Programming language implementation"},
+        {"url": "https://en.wikipedia.org/wiki/Python_(programming_language)", "title": "Python (programming language)"},
+    ]
+    # Contrived embeddings: candidate 2 (the real Python page) is closer in
+    # direction to the question than candidate 1, despite candidate 1
+    # sharing the literal word "implementation" with the question text.
+    question_embedding = [1.0, 0.0]
+    embeddings = {
+        "Programming language implementation": [0.0, 1.0],   # orthogonal -> unrelated
+        "Python (programming language)": [0.9, 0.1],           # close -> relevant
+    }
+
+    with patch("embedding_client.get_embedding", return_value=question_embedding), \
+         patch("embedding_client.get_embeddings_batch",
+               side_effect=lambda texts: [embeddings[t] for t in texts]):
+        ranked = crawl_url_search.rank_candidates_by_embedding(
+            "What are the major implementations of Python?", candidates, top_n=2
+        )
+
+    check("the real Python page ranks first", ranked[0][1]["title"] == "Python (programming language)", f"got {ranked}")
+    check("the unrelated generic article ranks last", ranked[1][1]["title"] == "Programming language implementation", f"got {ranked}")
+
+
+def test_filter_relevant_seeds_keeps_semantically_related_seed():
+    print("\n--- filter_relevant_seeds keeps a seed related by meaning, not literal words ---")
+    print("Real bug this fixes: 'Lenovo' shares no words with 'laptops', so fuzzy matching")
+    print("scored it low against a generic laptops question and a different site crowded it out.")
+
+    tracked = [
+        {"url": "https://www.lenovo.com/", "title": "Lenovo"},
+        {"url": "https://en.wikipedia.org/wiki/Python_(programming_language)", "title": "python"},
+    ]
+    question_embedding = [1.0, 0.0]
+    embeddings = {"Lenovo": [0.9, 0.1], "python": [0.0, 1.0]}
+
+    with patch("embedding_client.get_embedding", return_value=question_embedding), \
+         patch("embedding_client.get_embeddings_batch",
+               side_effect=lambda texts: [embeddings[t] for t in texts]), \
+         patch.object(crawl_url_search, "SEED_RELEVANCE_THRESHOLD", 50.0):
+        relevant = crawl_url_search.filter_relevant_seeds("tell me about laptops", tracked)
+
+    check("only the Lenovo seed is kept", [t["title"] for t in relevant] == ["Lenovo"], f"got {relevant}")
+
+
+def test_filter_relevant_seeds_fails_open_when_nothing_clears_threshold():
+    print("\n--- filter_relevant_seeds keeps every seed if none clear the threshold (fail open) ---")
+
+    tracked = [{"url": "https://a.example", "title": "a"}, {"url": "https://b.example", "title": "b"}]
+    with patch("embedding_client.get_embedding", return_value=[1.0, 0.0]), \
+         patch("embedding_client.get_embeddings_batch", return_value=[[0.0, 1.0], [0.0, 1.0]]), \
+         patch.object(crawl_url_search, "SEED_RELEVANCE_THRESHOLD", 50.0):
+        relevant = crawl_url_search.filter_relevant_seeds("unrelated question", tracked)
+
+    check("all seeds kept when nothing clears the threshold", relevant == tracked, f"got {relevant}")
+
+
+def test_filter_relevant_seeds_fails_open_on_embedding_error():
+    print("\n--- filter_relevant_seeds keeps every seed if the embedding call itself fails ---")
+
+    tracked = [{"url": "https://a.example", "title": "a"}]
+    with patch("embedding_client.get_embedding", side_effect=RuntimeError("network down")):
+        relevant = crawl_url_search.filter_relevant_seeds("any question", tracked)
+
+    check("all seeds kept when the relevance check itself errors", relevant == tracked, f"got {relevant}")
+
+
 def test_crawl_url_answer_no_seeds_returns_none():
     print("\n--- crawl_url_answer returns None when there are no tracked seed URLs ---")
 
@@ -219,10 +310,16 @@ def test_crawl_url_answer_success_with_citation_based_sources():
     }
 
     with patch.object(crawl_url_search, "get_url_candidates", return_value=candidates), \
+         patch.object(crawl_url_search, "filter_relevant_seeds", side_effect=lambda q, tracked: tracked), \
          patch.object(crawl_url_search, "build_candidate_pool", new=AsyncMock(return_value=pool)), \
-         patch.object(crawl_url_search, "rank_candidates", return_value=[(95.0, pool[0]), (10.0, pool[1])]), \
+         patch.object(crawl_url_search, "rank_candidates_by_embedding", return_value=[(95.0, pool[0]), (10.0, pool[1])]), \
          patch.object(crawl_url_search, "_fetch_page", side_effect=fake_fetch_page), \
-         patch.object(helpdesk_answer, "generate_structured_response", return_value=structured):
+         patch.object(helpdesk_answer, "generate_structured_response", return_value=structured), \
+         patch.object(helpdesk_answer, "_follow_up_answerable", return_value=True):
+        # _follow_up_answerable does its own live classify-model call —
+        # irrelevant to what THIS test checks (citation-based sourcing),
+        # so it's stubbed to always pass; see test_structured_response.py
+        # for its own dedicated tests.
 
         result = run(crawl_url_search.crawl_url_answer("how do I fix my vpn", {}))
 
@@ -255,8 +352,9 @@ def test_crawl_url_answer_passes_conversation_history_through():
     }
 
     with patch.object(crawl_url_search, "get_url_candidates", return_value=candidates), \
+         patch.object(crawl_url_search, "filter_relevant_seeds", side_effect=lambda q, tracked: tracked), \
          patch.object(crawl_url_search, "build_candidate_pool", new=AsyncMock(return_value=pool)), \
-         patch.object(crawl_url_search, "rank_candidates", return_value=[(95.0, pool[0])]), \
+         patch.object(crawl_url_search, "rank_candidates_by_embedding", return_value=[(95.0, pool[0])]), \
          patch.object(crawl_url_search, "_fetch_page", side_effect=fake_fetch_page), \
          patch.object(helpdesk_answer, "generate_structured_response", return_value=structured) as mock_generate:
 
@@ -276,8 +374,9 @@ def test_crawl_url_answer_not_found_returns_none():
         return {"url": url, "title": "T", "html": "<html><body>irrelevant content</body></html>"}
 
     with patch.object(crawl_url_search, "get_url_candidates", return_value=candidates), \
+         patch.object(crawl_url_search, "filter_relevant_seeds", side_effect=lambda q, tracked: tracked), \
          patch.object(crawl_url_search, "build_candidate_pool", new=AsyncMock(return_value=pool)), \
-         patch.object(crawl_url_search, "rank_candidates", return_value=[(50.0, pool[0])]), \
+         patch.object(crawl_url_search, "rank_candidates_by_embedding", return_value=[(50.0, pool[0])]), \
          patch.object(crawl_url_search, "_fetch_page", side_effect=fake_fetch_page), \
          patch.object(helpdesk_answer, "generate_structured_response",
                        return_value={"not_found": True, "subject": "", "description": "", "answer": "",
@@ -298,6 +397,11 @@ if __name__ == "__main__":
     test_rank_candidates_short_specific_title_beats_generic_unrelated_one()
     test_build_candidate_pool_includes_seed_and_sublinks()
     test_build_candidate_pool_skips_failed_seed()
+    test_cosine_similarity_basics()
+    test_rank_candidates_by_embedding_uses_meaning_not_literal_text()
+    test_filter_relevant_seeds_keeps_semantically_related_seed()
+    test_filter_relevant_seeds_fails_open_when_nothing_clears_threshold()
+    test_filter_relevant_seeds_fails_open_on_embedding_error()
     test_crawl_url_answer_no_seeds_returns_none()
     test_crawl_url_answer_success_with_citation_based_sources()
     test_crawl_url_answer_passes_conversation_history_through()
