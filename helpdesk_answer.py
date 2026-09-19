@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import requests
@@ -118,7 +119,15 @@ def search_chunks(question: str, top_k: int = SEARCH_TOP_K, source_type_filter: 
     )
     if source_type_filter:
         escaped = source_type_filter.replace("'", "''")
-        search_kwargs["filter"] = f"source_type eq '{escaped}'"
+        filter_expr = f"source_type eq '{escaped}'"
+        if source_type_filter == "ticket":
+            # A ticket only ever becomes a candidate here if it was already
+            # classified Relevant+Complete+Actionable at sync time (see
+            # classify_ticket_actionable) — a bare-title ticket with no real
+            # resolution should never even be retrieved, regardless of how
+            # any one question gets phrased.
+            filter_expr += " and is_actionable eq true"
+        search_kwargs["filter"] = filter_expr
 
     results = search_client.search(**search_kwargs)
     return [dict(r) for r in results]
@@ -384,25 +393,40 @@ def resolve_cited_chunks(chunks: list[dict], reference_numbers: object, answer_t
     alongside the real source, showing both to the user as if each
     contributed to the answer. Capped at MAX_RESPONSE_SOURCES verified
     hits since that's all that's ever shown regardless.
+
+    All candidates' checks run concurrently (not one at a time) — each is
+    an independent network call, confirmed live to be the single largest
+    contributor to per-question latency when run sequentially (this
+    function's total time was the sum of every check; now it's roughly
+    the slowest one). REVERT: replace the ThreadPoolExecutor block below
+    with a plain `for chunk in candidates: if _content_supports_answer(...)`
+    loop to go back to sequential checking — the verification logic
+    itself (_content_supports_answer) is unchanged either way.
     """
     if not isinstance(reference_numbers, list):
         return []
     seen_keys: set = set()
-    resolved: list[dict] = []
+    candidates: list[dict] = []
     for ref in reference_numbers:
-        if len(resolved) >= MAX_RESPONSE_SOURCES:
-            break
         if not isinstance(ref, int) or not (1 <= ref <= len(chunks)):
             continue
         chunk = chunks[ref - 1]
         key = chunk.get("page_id") or chunk.get("url") or chunk.get("title")
         if key in seen_keys:
             continue
-        if answer_text and not _content_supports_answer(answer_text, chunk):
-            continue
         seen_keys.add(key)
-        resolved.append(chunk)
-    return resolved
+        candidates.append(chunk)
+
+    if not answer_text:
+        return candidates[:MAX_RESPONSE_SOURCES]
+    if not candidates:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+        supported_flags = list(pool.map(lambda c: _content_supports_answer(answer_text, c), candidates))
+
+    verified = [c for c, supported in zip(candidates, supported_flags) if supported]
+    return verified[:MAX_RESPONSE_SOURCES]
 
 
 def _classify_yes_no(user_prompt: str) -> bool:
@@ -481,6 +505,41 @@ def _content_supports_answer(answer_text: str, chunk: dict) -> bool:
         return False
 
 
+def classify_ticket_actionable(ticket_text: str) -> bool:
+    """A one-time, per-ticket classification (called from
+    sync_tickets_timer, cached via the same content_hash dedup as
+    everything else — only re-checked when a ticket's content actually
+    changes) of whether the ticket is Relevant+Complete+Actionable enough
+    to ever be cited as an answer source: does it contain a real
+    resolution/steps a user could follow, not just a subject line or
+    placeholder text?
+
+    Deliberately a stable, ticket-level property rather than a per-answer
+    check — confirmed live that a per-answer citation check alone isn't
+    reliable, since a topically-matching but content-free ticket (e.g.
+    "VPN is not working properly", nothing else) can still get judged as
+    "supporting" a sufficiently generic generated answer. This is checked
+    once, independent of any question, and used to keep such a ticket out
+    of ticket search results entirely (see search_chunks()'s
+    "is_actionable eq true" filter) — fails closed (not actionable) on
+    empty content or a failed classify call, same as this file's other
+    checks.
+    """
+    content = (ticket_text or "").strip()[:1500]
+    if not content:
+        return False
+    try:
+        return _classify_yes_no(
+            f"Ticket content:\n{content}\n\n"
+            "Does this ticket contain an actual resolution or clear steps someone "
+            "could follow to fix their issue — not just a subject line, a vague "
+            "note, or placeholder text with no real information?"
+        )
+    except Exception:  # noqa: BLE001 — a failed check should exclude the ticket, not break the sync
+        logger.warning("Ticket actionability check failed; treating as not actionable.")
+        return False
+
+
 def resolve_valid_follow_ups(chunks: list[dict], raw_follow_ups: object) -> list[str]:
     """Keeps only follow-up questions whose reference_number genuinely
     points at one of the numbered references actually shown to the model,
@@ -490,13 +549,17 @@ def resolve_valid_follow_ups(chunks: list[dict], raw_follow_ups: object) -> list
     dead end. Shared between helpdesk_answer's own response building and
     crawl_url_search.py's (both call generate_structured_response() and
     need the same guarantee).
+
+    All candidates' checks run concurrently (not one at a time) — same
+    reasoning and same revert instructions as resolve_cited_chunks()
+    above: swap the ThreadPoolExecutor block for a plain sequential loop
+    to go back to checking one at a time; _follow_up_answerable itself is
+    unchanged either way.
     """
     if not isinstance(raw_follow_ups, list):
         return []
-    valid: list[str] = []
+    candidates: list[tuple[str, dict]] = []
     for item in raw_follow_ups:
-        if len(valid) >= 3:
-            break
         if not isinstance(item, dict):
             continue
         question_text = item.get("question")
@@ -505,10 +568,16 @@ def resolve_valid_follow_ups(chunks: list[dict], raw_follow_ups: object) -> list
             continue
         if not isinstance(ref, int) or not (1 <= ref <= len(chunks)):
             continue
-        if not _follow_up_answerable(question_text, chunks[ref - 1]):
-            continue
-        valid.append(question_text)
-    return valid
+        candidates.append((question_text, chunks[ref - 1]))
+
+    if not candidates:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+        answerable_flags = list(pool.map(lambda pair: _follow_up_answerable(pair[0], pair[1]), candidates))
+
+    valid = [question_text for (question_text, _), answerable in zip(candidates, answerable_flags) if answerable]
+    return valid[:3]
 
 
 _INLINE_BULLET_PATTERN = re.compile(r"([.:])\s+-\s+")
@@ -610,7 +679,19 @@ def _is_pure_greeting(question: str) -> bool:
     return len(words) <= 4 and all(word in _GREETING_WORDS for word in words)
 
 
-def answer_question(question: str, conversation_history: Optional[list[dict]] = None) -> dict:
+def _debug_chunk_summary(chunks: list[dict]) -> list[dict]:
+    """Compact, human-readable summary of a chunk list for debug_trace —
+    just enough to see what was actually considered (title, source, real
+    match score), not the full content."""
+    return [
+        {"title": c.get("title"), "source_type": c.get("source_type"), "score": c.get("@search.score")}
+        for c in chunks
+    ]
+
+
+def answer_question(
+    question: str, conversation_history: Optional[list[dict]] = None, debug: bool = False
+) -> dict:
     """Main entry point. Checks resolved/closed tickets first — a real
     support conversation that reached a resolution is often a better
     answer than generic documentation — and only falls back to the full
@@ -629,7 +710,17 @@ def answer_question(question: str, conversation_history: Optional[list[dict]] = 
     must resend the relevant prior turns on every request; omit it (or
     pass an empty list) for plain single-turn behavior, unchanged from
     before this parameter existed.
+
+    debug (optional, internal tooling only — not exposed by the public
+    widget, only the test-ask-azure.html debug mode): when True, adds a
+    "debug" key to the returned dict — a list of {"stage", ...} entries,
+    one per place actually checked (ticket_first / live_url / fallback),
+    showing what was found/skipped and why, so the real search-and-decide
+    process can be inspected directly instead of only through Application
+    Insights traces. No effect on the answer itself either way.
     """
+    debug_trace: Optional[list[dict]] = [] if debug else None
+
     if _is_pure_greeting(question):
         return {
             "subject": "Welcome",
@@ -643,11 +734,19 @@ def answer_question(question: str, conversation_history: Optional[list[dict]] = 
             "follow_up_questions": [],
         }
 
+    def _finish(result: dict) -> dict:
+        if debug_trace is not None:
+            result["debug"] = debug_trace
+        return result
+
     try:
         ticket_chunks = search_chunks(question, source_type_filter="ticket")
     except Exception:  # noqa: BLE001
         logger.exception("Ticket search failed for question: %s", question[:100])
         ticket_chunks = []
+
+    if debug_trace is not None:
+        debug_trace.append({"stage": "ticket_first", "chunks_considered": _debug_chunk_summary(ticket_chunks)})
 
     if ticket_chunks:
         try:
@@ -681,8 +780,15 @@ def answer_question(question: str, conversation_history: Optional[list[dict]] = 
             logger.exception("Ticket answer generation failed for question: %s", question[:100])
             result = None
 
+        if debug_trace is not None:
+            debug_trace[-1]["outcome"] = (
+                "answered" if result is not None and result.get("status") == "answered"
+                else "not_found" if result is not None
+                else "error"
+            )
+
         if result is not None and result.get("status") != "not_found":
-            return result
+            return _finish(result)
 
     # Live per-question URL search. NOTE: this does NOT gate on whether
     # ticket_chunks was non-empty — Azure AI Search's vector kNN always
@@ -727,13 +833,24 @@ def answer_question(question: str, conversation_history: Optional[list[dict]] = 
         # when a request genuinely needs live URL search.
         from crawl_url_search import crawl_url_answer
 
-        live_result = asyncio.run(crawl_url_answer(question, {}, conversation_history=None))
+        live_debug: Optional[dict] = {} if debug_trace is not None else None
+        live_result = asyncio.run(
+            crawl_url_answer(question, {}, conversation_history=None, debug_info=live_debug)
+        )
     except Exception:  # noqa: BLE001 — live search is a bonus path, never block the index fallback
         logger.exception("Live URL search failed for question: %s", question[:100])
         live_result = None
+        live_debug = None
+
+    if debug_trace is not None:
+        stage_entry = {"stage": "live_url"}
+        if live_debug:
+            stage_entry.update(live_debug)
+        stage_entry["outcome"] = "answered" if live_result is not None else "not_found_or_skipped"
+        debug_trace.append(stage_entry)
 
     if live_result is not None:
-        return live_result
+        return _finish(live_result)
 
     # Ticket search returned nothing, or didn't answer it — fall back to
     # everything (Library docs + tickets), searched per source_type and
@@ -743,13 +860,140 @@ def answer_question(question: str, conversation_history: Optional[list[dict]] = 
         chunks = search_chunks_all_sources(question)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Search failed for question: %s", question[:100])
-        return {"status": "error", "message": f"Search failed: {exc}"}
+        return _finish({"status": "error", "message": f"Search failed: {exc}"})
+
+    if debug_trace is not None:
+        debug_trace.append({"stage": "fallback", "chunks_considered": _debug_chunk_summary(chunks)})
 
     if not chunks:
-        return {"status": "not_found"}
+        if debug_trace is not None:
+            debug_trace[-1]["outcome"] = "not_found"
+        sector = _detect_it_sector(question)
+        if sector:
+            triage_res = _generate_sector_triage_response(question, sector, conversation_history)
+            if triage_res:
+                if debug_trace is not None:
+                    debug_trace[-1]["outcome"] = "triage_answered"
+                return _finish(triage_res)
+        return _finish({"status": "not_found"})
 
     try:
-        return _generate_and_format(question, chunks, conversation_history)
+        result = _generate_and_format(question, chunks, conversation_history)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Answer generation failed for question: %s", question[:100])
-        return {"status": "error", "message": f"Answer generation failed: {exc}"}
+        return _finish({"status": "error", "message": f"Answer generation failed: {exc}"})
+
+    if debug_trace is not None:
+        debug_trace[-1]["outcome"] = result.get("status", "unknown")
+
+    if result.get("status") == "not_found":
+        sector = _detect_it_sector(question)
+        if sector:
+            triage_res = _generate_sector_triage_response(question, sector, conversation_history)
+            if triage_res:
+                if debug_trace is not None:
+                    debug_trace[-1]["outcome"] = "triage_answered"
+                return _finish(triage_res)
+
+    return _finish(result)
+
+
+_IT_SECTOR_PATTERNS = {
+    "Hardware / Device": re.compile(
+        r"\b(laptop|computer|pc|macbook|mac|desktop|charger|battery|monitor|screen|display|keyboard|mouse|dock|docking|hardware)\b",
+        re.IGNORECASE,
+    ),
+    "VPN / Remote Access": re.compile(
+        r"\b(vpn|globalprotect|global protect|remote access|anyconnect|openvpn|tunnel|telework)\b",
+        re.IGNORECASE,
+    ),
+    "Network / Wi-Fi": re.compile(
+        r"\b(wifi|wi-fi|internet|network|ethernet|connection|connectivity|offline|dns|ip)\b",
+        re.IGNORECASE,
+    ),
+    "Email / Outlook": re.compile(
+        r"\b(outlook|email|mail|mailbox|inbox|teams|exchange)\b",
+        re.IGNORECASE,
+    ),
+    "Account / Access": re.compile(
+        r"\b(password|passcode|login|log in|signin|sign in|locked out|lockout|mfa|2fa|authenticator|access request|credentials)\b",
+        re.IGNORECASE,
+    ),
+    "Software / Application": re.compile(
+        r"\b(software|app|application|adobe|office|word|excel|powerpoint|install|installation|crash|freezing|bug)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _detect_it_sector(question: str) -> Optional[str]:
+    """Detects whether a user's question belongs to a recognized IT sector,
+    even if the query is vague or under-specified.
+    """
+    for sector, pattern in _IT_SECTOR_PATTERNS.items():
+        if pattern.search(question):
+            return sector
+    return None
+
+
+def _generate_sector_triage_response(
+    question: str, sector: str, conversation_history: Optional[list[dict]] = None
+) -> dict:
+    """Generates a structured Sector Triage Response for vague IT queries so
+    the assistant never returns not_found for recognized IT sectors.
+    Provides first-aid troubleshooting checks + 3 interactive follow-up options.
+    """
+    if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_API_KEY:
+        return {}
+
+    system_prompt = (
+        "Your name is Saunders Assistant. You are an expert IT Helpdesk Tier-1 Support Specialist.\n"
+        f"The user has an issue in the '{sector}' sector: \"{question}\".\n\n"
+        "Generate a helpful, structured Sector Triage Guide matching exactly this JSON schema:\n"
+        '{"subject": string, "description": string, "answer": string, '
+        '"category": string, "subcategory": string, "follow_up_questions": [string, string, string]}\n\n'
+        "Rules:\n"
+        "- subject: A short 2-4 word phrase summarizing the triage guide (e.g. \"Laptop Issue Triage\", \"VPN Connectivity Triage\").\n"
+        "- description: One clear sentence stating you are providing initial triage steps for their issue.\n"
+        "- answer: Start with a 1-sentence polite acknowledgment (e.g. \"I understand you are experiencing an issue with your laptop. Here are the most effective initial troubleshooting steps you can try:\"). Then provide 3 to 4 clear, practical bullet points (each starting on a new line with \"- \") offering top first-aid troubleshooting checks for this sector. End with a polite line asking the user to specify their exact symptom.\n"
+        "- category: \"IT\"\n"
+        f"- subcategory: \"{sector}\"\n"
+        "- follow_up_questions: Exactly 3 specific, interactive diagnostic follow-up questions that narrow down the exact issue (e.g., for laptop: \"Is your laptop failing to power on at all?\", \"Is your laptop screen black or blank?\", \"Is your laptop running slow or freezing?\").\n"
+    )
+
+    url = (
+        f"{AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/"
+        f"{AZURE_OPENAI_ANSWER_DEPLOYMENT}/chat/completions"
+        f"?api-version={AZURE_OPENAI_API_VERSION}"
+    )
+    headers = {"api-key": AZURE_OPENAI_API_KEY, "Content-Type": "application/json"}
+    payload = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ],
+        "max_completion_tokens": AZURE_OPENAI_ANSWER_MAX_TOKENS,
+        "response_format": {"type": "json_object"},
+    }
+    if AZURE_OPENAI_ANSWER_TEMPERATURE:
+        payload["temperature"] = float(AZURE_OPENAI_ANSWER_TEMPERATURE)
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        structured = json.loads(resp.json()["choices"][0]["message"]["content"])
+        return {
+            "subject": structured.get("subject", f"{sector} Support"),
+            "description": structured.get("description", f"Assisting with {sector} troubleshooting."),
+            "status": "answered",
+            "answer": normalize_bullet_formatting(structured.get("answer", "")),
+            "category": "IT",
+            "subcategory": sector,
+            "source": "system_triage",
+            "sources": [],
+            "follow_up_questions": structured.get("follow_up_questions", [])[:3],
+        }
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to generate sector triage response for sector: %s", sector)
+        return {}
+
