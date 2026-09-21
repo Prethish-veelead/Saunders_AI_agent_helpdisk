@@ -26,12 +26,12 @@ import azure.durable_functions as df
 
 from sharepoint_client import get_library_documents, get_resolved_tickets, get_ticket_comments
 from embedding_client import get_embedding
-from chunking import chunk_text
+from chunking import chunk_text, chunk_library_document
 from search_index import (
     get_search_client, create_or_update_index, delete_chunks_for_page,
     get_indexed_content_hash, get_indexed_page_ids,
 )
-from helpdesk_answer import answer_question
+from helpdesk_answer import answer_question, classify_ticket_actionable
 import hashlib
 
 logger = logging.getLogger("helpdesk_sync")
@@ -115,7 +115,7 @@ def sync_library_docs_timer(timer: func.TimerRequest) -> None:
                 logger.info("Library doc '%s' unchanged, skipping.", doc.title)
                 continue
 
-            chunks = chunk_text(doc.text)
+            chunks = chunk_library_document(doc.text)
             if not chunks:
                 continue
 
@@ -217,6 +217,14 @@ def sync_tickets_timer(timer: func.TimerRequest) -> None:
             if not chunks:
                 continue
 
+            # Computed once per ticket, only when its content actually
+            # changed (this whole block is skipped otherwise, above) — see
+            # classify_ticket_actionable's docstring for why this is a
+            # stable, ticket-level check rather than a per-question one.
+            is_actionable = classify_ticket_actionable(full_text)
+            if not is_actionable:
+                logger.info("Ticket %s indexed but marked not actionable (no real resolution content).", ticket_id)
+
             records = []
             for i, chunk in enumerate(chunks):
                 embedding = get_embedding(chunk)
@@ -237,6 +245,7 @@ def sync_tickets_timer(timer: func.TimerRequest) -> None:
                     "category": ticket.get("department", ""),
                     "sub_category": ticket.get("sub_category", ""),
                     "status": ticket.get("status", ""),
+                    "is_actionable": is_actionable,
                     "crawled_at": _now_iso(),
                     "content_hash": content_hash,
                     "vector": embedding,
@@ -310,7 +319,39 @@ def ask(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     conversation_history = _parse_conversation_history(body.get("conversation_history"))
+    # Internal debug-mode tooling only (see test-ask-azure.html's debug
+    # checkbox) — adds a "debug" field showing exactly what was
+    # found/skipped at each stage. False by default; a normal caller never
+    # sees it unless it explicitly opts in.
+    debug = bool(body.get("debug"))
 
-    result = answer_question(question.strip(), conversation_history=conversation_history)
+    result = answer_question(question.strip(), conversation_history=conversation_history, debug=debug)
     status_code = 200 if result["status"] != "error" else 502
     return func.HttpResponse(json.dumps(result), status_code=status_code, mimetype="application/json")
+
+
+@myApp.route(route="sync_documents", methods=["POST", "GET"])
+def sync_documents_endpoint(req: func.HttpRequest) -> func.HttpResponse:
+    """HTTP trigger for client-side or manual on-demand document sync.
+    Syncs SharePoint Library documents and resolved tickets directly to
+    Azure AI Search on request.
+    """
+    try:
+        sync_library_docs_timer(None)
+        sync_tickets_timer(None)
+        return func.HttpResponse(
+            json.dumps({
+                "status": "success",
+                "message": "SharePoint documents and helpdesk tickets successfully synced to Azure AI Search."
+            }),
+            status_code=200,
+            mimetype="application/json",
+        )
+    except Exception as exc:
+        logger.exception("Manual document sync failed: %s", exc)
+        return func.HttpResponse(
+            json.dumps({"status": "error", "message": f"Sync failed: {str(exc)}"}),
+            status_code=500,
+            mimetype="application/json",
+        )
+
